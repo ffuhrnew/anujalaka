@@ -45,6 +45,11 @@ Uploading to devices requires access to the `rnodeconf` utility included in the 
 
 Instructions for command line builds and packaging for firmware distribution.
 
+## Build Options
+
+- `-DHAS_RNS` Used to enable the microReticulum RNS stack and transport node.
+- `-DUDP_TRANSPORT` Used to enable WiFi connection (when configured through `rnodeconf` as an additional transport medium (currently hard-coded to use port 4242).
+
 ## PlatformIO Command Line
 
 Clean all environments (boards):

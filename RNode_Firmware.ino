@@ -22,6 +22,9 @@
 #include <Bytes.h>
 #include <queue>
 #endif
+#if defined(UDP_TRANSPORT)
+#include "UDPInterface.h"
+#endif
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -96,16 +99,12 @@ void update_csma_parameters();
 // CBA LoRa interface
 class LoRaInterface : public RNS::InterfaceImpl {
 public:
-	LoRaInterface() : RNS::InterfaceImpl("LoRaInterface") {
-		_IN = true;
-		_OUT = true;
-		_HW_MTU = 508;
-	}
 	LoRaInterface(const char *name) : RNS::InterfaceImpl(name) {
 		_IN = true;
 		_OUT = true;
 		_HW_MTU = 508;
 	}
+	LoRaInterface() : LoRaInterface("LoRaInterface") {}
 	virtual ~LoRaInterface() {
 		_name = "deleted";
 	}
@@ -126,44 +125,44 @@ protected:
 	virtual void send_outgoing(const RNS::Bytes& data) {
     // CBA NOTE header will be addded later by transmit function
     TRACEF("LoRaInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
-    TRACE("LoRaInterface.send_outgoing: adding packet to outgoing queue...");
-    for (size_t i = 0; i < data.size(); i++) {
-        if (queue_height < CONFIG_QUEUE_MAX_LENGTH && queued_bytes < CONFIG_QUEUE_SIZE) {
-            queued_bytes++;
-            packet_queue[queue_cursor++] = data.data()[i];
-            if (queue_cursor == CONFIG_QUEUE_SIZE) queue_cursor = 0;
-        }
-    }
-    if (!fifo16_isfull(&packet_starts) && queued_bytes < CONFIG_QUEUE_SIZE) {
-        uint16_t s = current_packet_start;
-        int16_t e = queue_cursor-1; if (e == -1) e = CONFIG_QUEUE_SIZE-1;
-        uint16_t l;
-
-        if (s != e) {
-            l = (s < e) ? e - s + 1 : CONFIG_QUEUE_SIZE - s + e + 1;
-        } else {
-            l = 1;
-        }
-
-        if (l >= MIN_L) {
-            queue_height++;
-
-            fifo16_push(&packet_starts, s);
-            fifo16_push(&packet_lengths, l);
-
-            current_packet_start = queue_cursor;
-        }
-
-    }
-    // Perform post-send housekeeping
     try {
+      TRACE("LoRaInterface.send_outgoing: adding packet to outgoing queue...");
+      for (size_t i = 0; i < data.size(); i++) {
+          if (queue_height < CONFIG_QUEUE_MAX_LENGTH && queued_bytes < CONFIG_QUEUE_SIZE) {
+              queued_bytes++;
+              packet_queue[queue_cursor++] = data.data()[i];
+              if (queue_cursor == CONFIG_QUEUE_SIZE) queue_cursor = 0;
+          }
+      }
+      if (!fifo16_isfull(&packet_starts) && queued_bytes < CONFIG_QUEUE_SIZE) {
+          uint16_t s = current_packet_start;
+          int16_t e = queue_cursor-1; if (e == -1) e = CONFIG_QUEUE_SIZE-1;
+          uint16_t l;
+
+          if (s != e) {
+              l = (s < e) ? e - s + 1 : CONFIG_QUEUE_SIZE - s + e + 1;
+          } else {
+              l = 1;
+          }
+
+          if (l >= MIN_L) {
+              queue_height++;
+
+              fifo16_push(&packet_starts, s);
+              fifo16_push(&packet_lengths, l);
+
+              current_packet_start = queue_cursor;
+          }
+
+      }
+      // Perform post-send housekeeping
       InterfaceImpl::handle_outgoing(data);
     }
     catch (const std::bad_alloc&) {
-      ERROR("LoRaInterface::handle_outgoing: bad_alloc - out of memory");
+      ERROR("LoRaInterface::send_outgoing: bad_alloc - out of memory");
     }
     catch (std::exception& e) {
-      ERRORF("LoRaInterface::handle_outgoing: %s", e.what());
+      ERRORF("LoRaInterface::send_outgoing: %s", e.what());
     }
   }
 };
@@ -575,11 +574,13 @@ void setup() {
       //DEBUG(content.toString());
       }
 */
+/*
     TRACE("FILE: destination_table");
     RNS::Bytes content;
     if (filesystem.read_file("/destination_table", content) > 0) {
       TRACE(content.toString().c_str());
     }
+*/
 #endif  // NDEBUG
 
     // CBA Start RNS
@@ -591,6 +592,8 @@ void setup() {
       RNS::Transport::hashlist_maxsize(50);
       RNS::Transport::max_pr_tags(32);
       RNS::Identity::known_destinations_maxsize(50);
+      RNS::Type::Reticulum::CLEAN_INTERVAL = 60*15; // 15 minutes
+      RNS::Type::Reticulum::PERSIST_INTERVAL = 60*60; // 60 minutes
 
       // Configure callbacks
       RNS::setLogCallback(&on_log);
@@ -608,6 +611,15 @@ void setup() {
       lora_interface = new LoRaInterface();
       lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(lora_interface);
+      TRACEF("LoRaInterface hash: %s", lora_interface.get_hash().toHex().c_str());
+
+#if HAS_WIFI && defined(UDP_TRANSPORT)
+      HEAD("Registering UDP Interface...", RNS::LOG_TRACE);
+      udp_interface = new UDPInterface();
+      udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+      RNS::Transport::register_interface(udp_interface);
+      TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());
+#endif
 
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();

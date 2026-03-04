@@ -14,6 +14,11 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <WiFi.h>
+#include <esp_wifi.h>
+#if defined(UDP_TRANSPORT)
+#include <WiFiUdp.h>
+#include <Bytes.h>
+#endif
 
 #if CONFIG_IDF_TARGET_ESP32
   #include "esp32/rom/rtc.h"
@@ -44,6 +49,13 @@ IPAddress ap_nm(255, 255, 255, 0);
 IPAddress wr_device_ip;
 char wr_hostname[10];
 wl_status_t wr_wifi_status = WL_IDLE_STATUS;
+#if defined(UDP_TRANSPORT)
+WiFiUDP udp;
+RNS::Bytes udp_buffer;
+#if defined(HAS_RNS)
+RNS::Interface udp_interface(RNS::Type::NONE);
+#endif
+#endif
 
 uint8_t wifi_mode = WIFI_OFF;
 bool wifi_init_ran = false;
@@ -122,7 +134,16 @@ void wifi_remote_start() {
     remote_listener.begin();
     remote_listener.setTimeout(WR_SOCKET_TIMEOUT);
     wr_state = WR_STATE_ON;
-  } else { remote_listener.end(); wr_state = WR_STATE_OFF; }
+#if defined(UDP_TRANSPORT)
+    udp.begin(UDP_PORT);
+#endif
+  } else {
+    remote_listener.end();
+    wr_state = WR_STATE_OFF;
+#if defined(UDP_TRANSPORT)
+    udp.stop();
+#endif
+  }
 }
 
 void wifi_remote_init() {
@@ -206,6 +227,19 @@ void wifi_update_status() {
 }
 
 void update_wifi() {
+#if defined(UDP_TRANSPORT)
+  if (udp.parsePacket() > 0) {
+    size_t len = udp.read(udp_buffer.writable(MTU), MTU);
+   if (len > 0) {
+      udp_buffer.resize(len);
+#if defined(HAS_RNS)
+      if (udp_interface) {
+        udp_interface.handle_incoming(udp_buffer);
+      }
+#endif
+    }
+  }
+#endif
   if (millis()-last_wifi_update >= wifi_update_interval_ms) {
     wifi_update_status();
     last_wifi_update = millis();

@@ -7,7 +7,7 @@ import shutil
 #
 
 def target_package(target, source, env):
-    print("--- Executing target_package steps...")
+    print("*** Executing target_package steps...")
     print("Platform:", env.GetProjectOption("platform"))
     print("Board:", env.GetProjectOption("board"))
     print("Variant:", env.GetProjectOption("custom_variant"))
@@ -21,11 +21,11 @@ def target_package(target, source, env):
 #
 
 def pre_upload(source, target, env):
-    print("--- Executing pre_upload steps...")
+    print("*** Executing pre_upload steps...")
     # do some actions
 
 def post_upload(source, target, env):
-    print("--- Executing post_upload steps...")
+    print("*** Executing post_upload steps...")
     print("Platform:", env.GetProjectOption("platform"))
     print("Board:", env.GetProjectOption("board"))
     print("Variant:", env.GetProjectOption("custom_variant"))
@@ -49,7 +49,7 @@ def post_upload(source, target, env):
         #firmware_package(env)
 
 def pre_clean(env):
-    print("--- Executing pre_clean steps...")
+    print("*** Executing pre_clean steps...")
     print("Platform:", env.GetProjectOption("platform"))
     print("Board:", env.GetProjectOption("board"))
     print("Variant:", env.GetProjectOption("custom_variant"))
@@ -61,19 +61,19 @@ def pre_clean(env):
     env.Execute("rm -f " + project_dir + "/Release/" + env.subst("$PROGNAME") + "_debug.zip")
 
 def full_clean(env):
-    print("--- Executing full_clean steps...")
+    print("*** Executing full_clean steps...")
     project_dir = env.subst("$PROJECT_DIR")
     print("project_dir:", project_dir)
     env.Execute("rm -f " + project_dir + "/Release/release.json")
 
 def device_wipe(env):
     # Device wipe
-    print("Wiping device...")
+    print("--- Wiping Device ---")
     env.Execute("rnodeconf --eeprom-wipe " + env.subst("$UPLOAD_PORT"))
 
 def device_provision(env):
     # Device provision
-    print("Provisioning device...")
+    print("--- Provisioning Device ---")
     platform = env.GetProjectOption("platform")
     print("Platform:", platform)
     board = env.GetProjectOption("board")
@@ -85,16 +85,18 @@ def device_provision(env):
             env.Execute("rnodeconf --product e0 --model e9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "lora32v21" | "lora32v21_local":
             env.Execute("rnodeconf --product b1 --model b9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
-        case "heltec32v4" | "heltec32v4_local":
+        case "heltec32v4pa" | "heltec32v4pa_local":
             env.Execute("rnodeconf --product c3 --model c8 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak4631" | "rak4631_local":
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_t114" | "heltec_t114_local":
             env.Execute("rnodeconf --product c2 --model c7 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case _:
+            print(f"Unknown board variant {variant}, can not provision device!")
 
 def firmware_hash(source, env):
     # Firmware hash
-    print("Updating firmware hash...")
+    print("--- Updating Firmware Hash ---")
     source_file = source[0].get_abspath()
     platform = env.GetProjectOption("platform")
     print("Platform:", platform)
@@ -122,10 +124,8 @@ def firmware_hash(source, env):
             print("Calculated hash does not match!")
 
 def firmware_package(env):
-    platform = env.GetProjectOption("platform")
-    board = env.GetProjectOption("board")
     # Firmware package
-    print("Building firmware package...")
+    print("--- Packaging Firmware ---")
     platform = env.GetProjectOption("platform")
     print("Platform:", platform)
     board = env.GetProjectOption("board")
