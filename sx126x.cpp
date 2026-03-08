@@ -10,6 +10,7 @@
   #if MCU_VARIANT == MCU_ESP32 and !defined(CONFIG_IDF_TARGET_ESP32S3)
     #include "soc/rtc_wdt.h"
   #endif
+  #include "driver/gpio.h"
   #define ISR_VECT IRAM_ATTR
 #else
   #define ISR_VECT
@@ -194,9 +195,13 @@ void sx126x::loraMode() {
 void sx126x::waitOnBusy() {
   unsigned long time = millis();
   if (_busy != -1) {
-    while (digitalRead(_busy) == HIGH) {
+    #if MCU_VARIANT == MCU_ESP32
+      while (gpio_get_level((gpio_num_t)_busy) == HIGH) {
+    #else
+      while (digitalRead(_busy) == HIGH) {
+    #endif
         if (millis() >= (time + 100)) { break; }
-    }
+      }
   }
 }
 
