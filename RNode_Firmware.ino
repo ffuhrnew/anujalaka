@@ -261,7 +261,16 @@ void setup() {
 
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32
-    esp_task_wdt_init(WDT_TIMEOUT, true); // enable panic so ESP32 restarts
+    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+      esp_task_wdt_config_t wdt_config = {
+          .timeout_ms     = WDT_TIMEOUT * 1000,
+          .idle_core_mask = 0,
+          .trigger_panic  = true,
+      };
+      esp_task_wdt_init(&wdt_config);
+    #else
+      esp_task_wdt_init(WDT_TIMEOUT, true); // enable panic so ESP32 restarts
+    #endif
     esp_task_wdt_add(NULL);               // add current thread to WDT watch
   #elif MCU_VARIANT == MCU_NRF52
     NRF_WDT->CONFIG         = 0x01;           // Configure WDT to run when CPU is asleep
