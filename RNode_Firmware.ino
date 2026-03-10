@@ -267,7 +267,12 @@ void setup() {
           .idle_core_mask = 0,
           .trigger_panic  = true,
       };
-      esp_task_wdt_init(&wdt_config);
+      // In IDF 5.x, the framework initializes TWDT before setup(); reconfigure
+      // it with our timeout rather than calling init() (which would fail with
+      // "TWDT already initialized").  Fall back to init() if not yet started.
+      if (esp_task_wdt_reconfigure(&wdt_config) == ESP_ERR_INVALID_STATE) {
+          esp_task_wdt_init(&wdt_config);
+      }
     #else
       esp_task_wdt_init(WDT_TIMEOUT, true); // enable panic so ESP32 restarts
     #endif
@@ -596,16 +601,29 @@ void setup() {
     if (hw_ready) {
 
       // Set sane memory limits based on hardware-specific availability
+#if defined(BOARD_HAS_PSRAM)
+      RNS::Transport::path_table_maxsize(500);
+      RNS::Transport::path_table_maxpersist(500);
+      RNS::Transport::announce_table_maxsize(500);
+      RNS::Transport::hashlist_maxsize(500);
+      RNS::Identity::known_destinations_maxsize(500);
+      RNS::Transport::max_pr_tags(500);
+#else
       RNS::Transport::path_table_maxsize(50);
+      RNS::Transport::path_table_maxpersist(50);
       RNS::Transport::announce_table_maxsize(50);
       RNS::Transport::hashlist_maxsize(50);
-      RNS::Transport::max_pr_tags(32);
       RNS::Identity::known_destinations_maxsize(50);
-      RNS::Type::Reticulum::CLEAN_INTERVAL = 60*15; // 15 minutes
-      RNS::Type::Reticulum::PERSIST_INTERVAL = 60*60; // 60 minutes
+      RNS::Transport::max_pr_tags(50);
+#endif
+      RNS::Reticulum::clean_interval(60*15); // 60 minutes
+      //RNS::Reticulum::clean_interval(60*15); // 15 minutes
+      RNS::Reticulum::persist_interval(60*60); // 60 minutes
+      //RNS::Reticulum::persist_interval(60*10); // 10 minutes
+      //RNS::Reticulum::persist_interval(60); // 1 minute
 
       // Configure callbacks
-      RNS::setLogCallback(&on_log);
+      RNS::set_log_callback(&on_log);
       RNS::Transport::set_receive_packet_callback(on_receive_packet);
       RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
 
@@ -635,6 +653,10 @@ void setup() {
       reticulum.transport_enabled(op_mode == MODE_TNC);
       reticulum.probe_destination_enabled(true);
       reticulum.start();
+
+      // Set loop callback only after the Reticulum instance is started
+      // (to avoid looping without a completely initialized instance)
+      RNS::Utilities::OS::set_loop_callback(&loop);
 
       // CBA load/create local destination for admin node
 /*

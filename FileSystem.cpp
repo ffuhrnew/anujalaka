@@ -252,7 +252,7 @@ void FileSystem::dumpDir(const char* dir) {
 
 
 /*virtua*/ bool FileSystem::file_exists(const char* file_path) {
-	TRACEF("file_exists: checking for existence of file %s", file_path);
+	//TRACEF("file_exists: checking for existence of file %s", file_path);
 /*
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	File file(FS);
@@ -271,7 +271,7 @@ void FileSystem::dumpDir(const char* dir) {
 }
 
 /*virtua*/ size_t FileSystem::read_file(const char* file_path, RNS::Bytes& data) {
-	TRACEF("read_file: reading from file %s", file_path);
+	//TRACEF("read_file: reading from file %s", file_path);
 	size_t read = 0;
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	File file(FS);
@@ -282,7 +282,7 @@ void FileSystem::dumpDir(const char* dir) {
 #endif
 		size_t size = file.size();
 		read = file.readBytes((char*)data.writable(size), size);
-		TRACEF("read_file: read %u bytes from file %s", read, file_path);
+		//TRACEF("read_file: read %u bytes from file %s", read, file_path);
 		if (read != size) {
 			ERRORF("read_file: failed to read file %s", file_path);
             data.resize(read);
@@ -297,7 +297,7 @@ void FileSystem::dumpDir(const char* dir) {
 }
 
 /*virtua*/ size_t FileSystem::write_file(const char* file_path, const RNS::Bytes& data) {
-	TRACEF("write_file: writing to file %s", file_path);
+	//TRACEF("write_file: writing to file %s", file_path);
 	// CBA TODO Replace remove with working truncation
 	if (FS.exists(file_path)) {
 		FS.remove(file_path);
@@ -328,7 +328,7 @@ void FileSystem::dumpDir(const char* dir) {
 }
 
 /*virtual*/ RNS::FileStream FileSystem::open_file(const char* file_path, RNS::FileStream::MODE file_mode) {
-	TRACEF("open_file: opening file %s", file_path);
+	//TRACEF("open_file: opening file %s", file_path);
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	int mode;
 	if (file_mode == RNS::FileStream::MODE_READ) {
@@ -350,7 +350,9 @@ void FileSystem::dumpDir(const char* dir) {
 		return {RNS::Type::NONE};
 	}
 	File* file = new File(FS);
-	if (!file->open(file_path, mode)) {
+	if (file == nullptr || !file->open(file_path, mode)) {
+		// CBA Isn't File* leaked on failure if not deleted here?!
+		if (file != nullptr) delete file;
 		ERRORF("open_file: failed to open output file %s", file_path);
 		return {RNS::Type::NONE};
 	}
@@ -359,7 +361,7 @@ void FileSystem::dumpDir(const char* dir) {
 	//	file->seek(0);
 	//	file->truncate(0);
 	//}
-	TRACEF("open_file: successfully opened file %s", file_path);
+	//TRACEF("open_file: successfully opened file %s", file_path);
 	return RNS::FileStream(new FileStream(file));
 #else
 	const char* mode;
@@ -376,30 +378,32 @@ void FileSystem::dumpDir(const char* dir) {
 		ERRORF("open_file: unsupported mode %d", file_mode);
 		return {RNS::Type::NONE};
 	}
-	TRACEF("open_file: opening file %s in mode %s", file_path, mode);
+	//TRACEF("open_file: opening file %s in mode %s", file_path, mode);
 	// CBA Using copy constructor to obtain File*
 	File* file = new File(FS.open(file_path, mode));
 	if (file == nullptr || !(*file)) {
+		// CBA Isn't File* leaked on failure if not deleted here?!
+		if (file != nullptr) delete file;
 		ERRORF("open_file: failed to open output file %s", file_path);
 		return {RNS::Type::NONE};
 	}
-	TRACEF("open_file: successfully opened file %s", file_path);
+	//TRACEF("open_file: successfully opened file %s", file_path);
 	return RNS::FileStream(new FileStream(file));
 #endif
 }
 
 /*virtua*/ bool FileSystem::remove_file(const char* file_path) {
-	TRACEF("remove_file: removing file %s", file_path);
+	//TRACEF("remove_file: removing file %s", file_path);
 	return FS.remove(file_path);
 }
 
 /*virtua*/ bool FileSystem::rename_file(const char* from_file_path, const char* to_file_path) {
-	TRACEF("rename_file: renaming file %s to %s", from_file_path, to_file_path);
+	//TRACEF("rename_file: renaming file %s to %s", from_file_path, to_file_path);
 	return FS.rename(from_file_path, to_file_path);
 }
 
 /*virtua*/ bool FileSystem::directory_exists(const char* directory_path) {
-	TRACEF("directory_exists: checking for existence of directory %s", directory_path);
+	//TRACEF("directory_exists: checking for existence of directory %s", directory_path);
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	File file(FS);
 	if (file.open(directory_path, FILE_O_READ)) {
@@ -415,7 +419,7 @@ void FileSystem::dumpDir(const char* dir) {
 }
 
 /*virtua*/ bool FileSystem::create_directory(const char* directory_path) {
-	TRACEF("create_directory: creating directory %s", directory_path);
+	//TRACEF("create_directory: creating directory %s", directory_path);
 	if (!FS.mkdir(directory_path)) {
 		ERRORF("create_directory: failed to create directory %s", directory_path);
 		return false;
@@ -424,7 +428,7 @@ void FileSystem::dumpDir(const char* dir) {
 }
 
 /*virtua*/ bool FileSystem::remove_directory(const char* directory_path) {
-	TRACEF("remove_directory: removing directory %s", directory_path);
+	//TRACEF("remove_directory: removing directory %s", directory_path);
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	if (!FS.rmdir_r(directory_path)) {
 #else
@@ -436,8 +440,8 @@ void FileSystem::dumpDir(const char* dir) {
 	return true;
 }
 
-/*virtua*/ std::list<std::string> FileSystem::list_directory(const char* directory_path) {
-	TRACEF("list_directory: listing directory %s", directory_path);
+/*virtua*/ std::list<std::string> FileSystem::list_directory(const char* directory_path, Callbacks::DirectoryListing callback /*= nullptr*/) {
+	//TRACEF("list_directory: listing directory %s", directory_path);
 	std::list<std::string> files;
 	File root = FS.open(directory_path);
 	if (!root) {
@@ -448,7 +452,8 @@ void FileSystem::dumpDir(const char* dir) {
 	while (file) {
 		if (!file.isDirectory()) {
 			char* name = (char*)file.name();
-			files.push_back(name);
+			if (callback) callback(name);
+			else files.push_back(name);
 		}
 		// CBA Following close required to avoid leaking memory
 		file.close();

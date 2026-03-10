@@ -2,6 +2,8 @@
 #include <Interface.h>
 #include <Log.h>
 #include <Bytes.h>
+
+#include <WiFi.h>
 #include <WiFiUdp.h>
 
 #define UDP_LOCAL_HOST "0.0.0.0"
@@ -10,6 +12,7 @@
 
 //#include "Remote.h"
 extern WiFiUDP udp;
+extern bool wifi_initialized;
 
 #if defined(HAS_RNS) && defined(UDP_TRANSPORT)
 // CBA UDP interface
@@ -39,12 +42,17 @@ protected:
     }
   }
 	virtual void send_outgoing(const RNS::Bytes& data) {
-    // CBA NOTE header will be addded later by transmit function
-    TRACEF("UDPInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
     try {
-      udp.beginPacket(UDP_REMOTE_HOST, UDP_PORT);
-      udp.write(data.data(), data.size());
-      udp.endPacket();
+      //if (udp.availableForWrite()) {
+      //wl_status_t wifi_status = WiFi.status();
+      //if (wifi_status == WL_CONNECTED) {
+      if (wifi_initialized) {
+        TRACEF("UDPInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
+        if (udp.beginPacket(UDP_REMOTE_HOST, UDP_PORT) != 0) {
+          udp.write(data.data(), data.size());
+          udp.endPacket();
+        }
+      }
       // Perform post-send housekeeping
       InterfaceImpl::handle_outgoing(data);
     }

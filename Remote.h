@@ -14,7 +14,6 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <WiFi.h>
-#include <esp_wifi.h>
 #if defined(UDP_TRANSPORT)
 #include <WiFiUdp.h>
 #include <Bytes.h>
@@ -107,13 +106,20 @@ void wifi_remote_start_sta() {
   }
 
   delay(100);
+  //Serial.print("WiFi ssid: ");
+  //Serial.println(wr_ssid);
+  //Serial.print("WiFi psk: ");
+  //Serial.println(wr_psk);
   if (wr_ssid[0] != 0x00) {
     if (wr_psk[0] != 0x00) { WiFi.begin(wr_ssid, wr_psk); }
     else                   { WiFi.begin(wr_ssid); }
   }
   
   delay(500);
+  //delay(10000);
   wr_wifi_status = WiFi.status(); 
+  //Serial.print("WiFi status: ");
+  //Serial.println(wr_wifi_status);
   wifi_initialized = true;
   wr_last_connect_try = millis();
 }
@@ -147,6 +153,7 @@ void wifi_remote_start() {
 }
 
 void wifi_remote_init() {
+  //Serial.print("Initializing WiFi...\n");
   memcpy(wr_hostname, bt_devname, 5);
   memcpy(wr_hostname+5, bt_devname+6, 4);
   wr_hostname[9] = 0x00;
@@ -228,15 +235,17 @@ void wifi_update_status() {
 
 void update_wifi() {
 #if defined(UDP_TRANSPORT)
-  if (udp.parsePacket() > 0) {
-    size_t len = udp.read(udp_buffer.writable(MTU), MTU);
-   if (len > 0) {
-      udp_buffer.resize(len);
+  if (wifi_initialized) {
+    if (udp.parsePacket() > 0) {
+      size_t len = udp.read(udp_buffer.writable(MTU), MTU);
+    if (len > 0) {
+        udp_buffer.resize(len);
 #if defined(HAS_RNS)
-      if (udp_interface) {
-        udp_interface.handle_incoming(udp_buffer);
-      }
+        if (udp_interface) {
+          udp_interface.handle_incoming(udp_buffer);
+        }
 #endif
+      }
     }
   }
 #endif
