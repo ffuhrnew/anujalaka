@@ -20,7 +20,6 @@
 #include <Interface.h>
 #include <Log.h>
 #include <Bytes.h>
-#include <queue>
 #endif
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
@@ -29,19 +28,6 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "Utilities.h"
-
-// CBA FileSystem
-#if 0
-#if defined(RNS_USE_FS)
-#include "FileSystemImpl.h"
-#else
-#include "NoopFileSystem.h"
-#endif
-#else
-// CBA microStore
-#include <microStore/impl/PosixFileSystemImpl.h>
-//#include <microStore/impl/LittleFSFileSystemImpl.h>
-#endif
 
 // CBA SD
 #if HAS_SDCARD
@@ -244,12 +230,35 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
 // CBA RNS
 RNS::Reticulum reticulum(RNS::Type::NONE);
 RNS::Interface lora_interface(RNS::Type::NONE);
-#if 0
-//RNS::FileSystem filesystem(RNS::Type::NONE);
-#else
-microStore::FileSystem filesystem(new microStoreImpl::PosixFileSystemImpl());
-//microStore::FileSystem filesystem(new microStoreImpl::LittleFSFileSystemImpl());
-#endif
+#if defined(RNS_USE_FS)
+  // CBA microStore
+  #if MCU_VARIANT == MCU_ESP32
+    #if defined(USE_FLASHFS)
+      #include <microStore/impl/FlashFileSystemImpl.h>
+      microStore::FileSystem filesystem(new microStoreImpl::FlashFileSystemImpl());
+    #else
+      //#include <microStore/impl/SPIFFSFileSystemImpl.h>
+      //microStore::FileSystem filesystem(new microStoreImpl::SPIFFSFileSystemImpl());
+      //#include <microStore/impl/LittleFSFileSystemImpl.h>
+      //microStore::FileSystem filesystem(new microStoreImpl::LittleFSFileSystemImpl());
+      #include <microStore/impl/PosixFileSystemImpl.h>
+      microStore::FileSystem filesystem(new microStoreImpl::PosixFileSystemImpl());
+    #endif
+  #elif MCU_VARIANT == MCU_NRF52
+    #if defined(USE_FLASHFS)
+      #include <microStore/impl/FlashFileSystemImpl.h>
+      microStore::FileSystem filesystem(new microStoreImpl::FlashFileSystemImpl());
+    #else
+      #include <microStore/impl/InternalFSSystemImpl.h>
+      microStore::FileSystem filesystem(new microStoreImpl::InternalFSFileSystemImpl());
+    #endif
+  #else
+    #include <microStore/impl/PosixFileSystemImpl.h>
+    microStore::FileSystem filesystem(new microStoreImpl::PosixFileSystemImpl());
+  #endif
+  #else // RNS_USE_FS
+    microStore::FileSystem filesystem(new microStoreImpl::NoopFileSystemImpl());
+  #endif // RNS_USE_FS
 #endif  // HAS_RNS
 
 void setup() {
