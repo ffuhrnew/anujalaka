@@ -3,16 +3,16 @@
 #ifdef HAS_RNS
 
 #include <FileSystem.h>
-#include <FileStream.h>
+#include <File.h>
 #include <Bytes.h>
 #include <Type.h>
 
 #include <Stream.h>
 
-class FileSystem : public RNS::FileSystemImpl {
+class FileSystemImpl : public RNS::FileSystemImpl {
 
 public:
-	FileSystem() {}
+	FileSystemImpl() {}
 
 	bool init();
 	bool format();
@@ -26,7 +26,7 @@ public:
 	virtual bool file_exists(const char* file_path);
 	virtual size_t read_file(const char* file_path, RNS::Bytes& data);
 	virtual size_t write_file(const char* file_path, const RNS::Bytes& data);
-	virtual RNS::FileStream open_file(const char* file_path, RNS::FileStream::MODE file_mode);
+	virtual RNS::File open_file(const char* file_path, RNS::File::MODE file_mode);
 	virtual bool remove_file(const char* file_path);
 	virtual bool rename_file(const char* from_file_path, const char* to_file_path);
 	virtual bool directory_exists(const char* directory_path);

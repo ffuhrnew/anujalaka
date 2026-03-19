@@ -31,10 +31,16 @@
 #include "Utilities.h"
 
 // CBA FileSystem
+#if 0
 #if defined(RNS_USE_FS)
-#include "FileSystem.h"
+#include "FileSystemImpl.h"
 #else
 #include "NoopFileSystem.h"
+#endif
+#else
+// CBA microStore
+#include <microStore/impl/PosixFileSystemImpl.h>
+//#include <microStore/impl/LittleFSFileSystemImpl.h>
 #endif
 
 // CBA SD
@@ -238,7 +244,12 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
 // CBA RNS
 RNS::Reticulum reticulum(RNS::Type::NONE);
 RNS::Interface lora_interface(RNS::Type::NONE);
-RNS::FileSystem filesystem(RNS::Type::NONE);
+#if 0
+//RNS::FileSystem filesystem(RNS::Type::NONE);
+#else
+microStore::FileSystem filesystem(new microStoreImpl::PosixFileSystemImpl());
+//microStore::FileSystem filesystem(new microStoreImpl::LittleFSFileSystemImpl());
+#endif
 #endif  // HAS_RNS
 
 void setup() {
@@ -552,30 +563,40 @@ void setup() {
 #ifdef HAS_RNS
   try {
     // CBA Init filesystem
+    HEAD("Initializing filesystem...", RNS::LOG_TRACE);
+#if 0
 #if defined(RNS_USE_FS)
-    filesystem = new FileSystem();
-    ((FileSystem*)filesystem.get())->init();
+    filesystem = new FileSystemImpl();
+    ((FileSystemImpl*)filesystem.get())->init();
 #else
     filesystem = new NoopFileSystem();
-    ((FileSystem*)filesystem.get())->init();
+    ((FileSystemImpl*)filesystem.get())->init();
+#endif
+#else
+    filesystem.init();
 #endif
 
-    HEAD("Registering filesystem...", RNS::LOG_TRACE);
+    // Remove legacy files
+    if (filesystem.exists("/destination_table")) filesystem.remove("/destination_table");
+    if (filesystem.isDirectory("/cache")) filesystem.rmdir("/cache");
+
+    TRACE("Registering filesystem...");
     RNS::Utilities::OS::register_filesystem(filesystem);
 
-#ifndef NDEBUG
-    //filesystem.remove_directory("/cache");
-    //filesystem.remove_file("/destination_table");
-    //filesystem.reformat();
-    TRACE("Listing filesystem...");
-#if defined(RNS_USE_FS)
-    //FileSystem::listDir("/");
+#if !defined(NDEBUG) && defined(RNS_USE_FS)
+#if 0
+    filesystem.format();
 #endif
-    TRACE("Finished listing");
-    //TRACE("Dumping filesystem...");
-    //FileSystem::dumpDir("/");
-    //TRACE("Finished dumping");
-    //reticulum.clear_caches();
+#if 1
+    Serial.println("Listing filesystem /:");
+    filesystem.listDirectory("/", [&](const char* path) -> void {
+      Serial.println(path);
+    });
+    Serial.println("Listing filesystem /cache:");
+    filesystem.listDirectory("/cache", [&](const char* path) -> void {
+      Serial.println(path);
+    });
+#endif
 
     // CBA DEBUG
 /*
@@ -595,7 +616,7 @@ void setup() {
       TRACE(content.toString().c_str());
     }
 */
-#endif  // NDEBUG
+#endif // !NDEBUG && RNS_USE_FS
 
     // CBA Start RNS
     if (hw_ready) {
@@ -622,12 +643,14 @@ void setup() {
       //RNS::Reticulum::persist_interval(60*10); // 10 minutes
       //RNS::Reticulum::persist_interval(60); // 1 minute
 
+      //reticulum.clear_caches();
+
       // Configure callbacks
       RNS::set_log_callback(&on_log);
       RNS::Transport::set_receive_packet_callback(on_receive_packet);
       RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
 
-      Serial.write("Starting RNS...\r\n");
+      HEAD("Starting RNS...\r\n", RNS::LOG_VERBOSE);
 #if defined(RNS_MEM_LOG)
       RNS::loglevel(RNS::LOG_MEM);
 #else

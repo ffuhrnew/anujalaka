@@ -1,5 +1,5 @@
-#include "FileSystem.h"
-#include "FileStream.h"
+#include "FileSystemImpl.h"
+#include "FileImpl.h"
 #include "FileSystemType.h"
 
 #ifdef HAS_RNS
@@ -56,7 +56,7 @@ SPIFlash_Device_t g_RAK15001 {
 #endif
 
 
-bool FileSystem::init() {
+bool FileSystemImpl::init() {
 	TRACE("Initializing filesystem...");
 	try {
 #if FS_TYPE == FS_TYPE_SPIFFS
@@ -107,14 +107,14 @@ bool FileSystem::init() {
 		}
 	}
 	catch (std::exception& e) {
-		//ERROR("FileSystem init Exception: " + std::string(e.what()));
+		//ERROR("FileSystemImpl init Exception: " + std::string(e.what()));
 		return false;
 	}
 	TRACE("Finished initializing");
 	return true;
 }
 
-bool FileSystem::format() {
+bool FileSystemImpl::format() {
 	INFO("Formatting filesystem...");
 	try {
 		if (!FS.format()) {
@@ -124,12 +124,12 @@ bool FileSystem::format() {
 		return true;
 	}
 	catch (std::exception& e) {
-		ERRORF("FileSystem reformat Exception: %s", e.what());
+		ERRORF("FileSystemImpl reformat Exception: %s", e.what());
 	}
 	return false;
 }
 
-bool FileSystem::reformat() {
+bool FileSystemImpl::reformat() {
 	INFO("Reformatting filesystem...");
 	try {
 		RNS::Bytes eeprom;
@@ -154,14 +154,14 @@ bool FileSystem::reformat() {
 		return true;
 	}
 	catch (std::exception& e) {
-		ERRORF("FileSystem reformat Exception: %s", e.what());
+		ERRORF("FileSystemImpl reformat Exception: %s", e.what());
 	}
 	return false;
 }
 
 #ifndef NDEBUG
 
-void FileSystem::listDir(const char* dir, const char* prefix /*= ""*/) {
+void FileSystemImpl::listDir(const char* dir, const char* prefix /*= ""*/) {
 	Serial.print(prefix);
 	std::string full_dir(dir);
 	if (full_dir.compare("/") != 0) {
@@ -204,7 +204,7 @@ void FileSystem::listDir(const char* dir, const char* prefix /*= ""*/) {
 	}
 }
 
-void FileSystem::dumpDir(const char* dir) {
+void FileSystemImpl::dumpDir(const char* dir) {
 	Serial.print("DIR: ");
 	std::string full_dir(dir);
 	if (full_dir.compare("/") != 0) {
@@ -251,8 +251,8 @@ void FileSystem::dumpDir(const char* dir) {
 #endif
 
 
-/*virtua*/ bool FileSystem::file_exists(const char* file_path) {
-	//TRACEF("file_exists: checking for existence of file %s", file_path);
+/*virtua*/ bool FileSystemImpl::file_exists(const char* file_path) {
+	TRACEF("file_exists: checking for existence of file %s", file_path);
 /*
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	File file(FS);
@@ -270,8 +270,8 @@ void FileSystem::dumpDir(const char* dir) {
 	return FS.exists(file_path);
 }
 
-/*virtua*/ size_t FileSystem::read_file(const char* file_path, RNS::Bytes& data) {
-	//TRACEF("read_file: reading from file %s", file_path);
+/*virtua*/ size_t FileSystemImpl::read_file(const char* file_path, RNS::Bytes& data) {
+	TRACEF("read_file: reading from file %s", file_path);
 	size_t read = 0;
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	File file(FS);
@@ -282,7 +282,7 @@ void FileSystem::dumpDir(const char* dir) {
 #endif
 		size_t size = file.size();
 		read = file.readBytes((char*)data.writable(size), size);
-		//TRACEF("read_file: read %u bytes from file %s", read, file_path);
+		TRACEF("read_file: read %u bytes from file %s", read, file_path);
 		if (read != size) {
 			ERRORF("read_file: failed to read file %s", file_path);
             data.resize(read);
@@ -296,8 +296,8 @@ void FileSystem::dumpDir(const char* dir) {
     return read;
 }
 
-/*virtua*/ size_t FileSystem::write_file(const char* file_path, const RNS::Bytes& data) {
-	//TRACEF("write_file: writing to file %s", file_path);
+/*virtua*/ size_t FileSystemImpl::write_file(const char* file_path, const RNS::Bytes& data) {
+	TRACEF("write_file: writing to file %s", file_path);
 	// CBA TODO Replace remove with working truncation
 	if (FS.exists(file_path)) {
 		FS.remove(file_path);
@@ -327,21 +327,21 @@ void FileSystem::dumpDir(const char* dir) {
     return wrote;
 }
 
-/*virtual*/ RNS::FileStream FileSystem::open_file(const char* file_path, RNS::FileStream::MODE file_mode) {
-	//TRACEF("open_file: opening file %s", file_path);
+/*virtual*/ RNS::File FileSystemImpl::open_file(const char* file_path, RNS::File::MODE file_mode) {
+	TRACEF("open_file: opening file %s", file_path);
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	int mode;
-	if (file_mode == RNS::FileStream::MODE_READ) {
+	if (file_mode == RNS::File::MODE_READ) {
 		mode = FILE_O_READ;
 	}
-	else if (file_mode == RNS::FileStream::MODE_WRITE) {
+	else if (file_mode == RNS::File::MODE_WRITE) {
 		mode = FILE_O_WRITE;
 		// CBA TODO Replace remove with working truncation
 		if (FS.exists(file_path)) {
 			FS.remove(file_path);
 		}
 	}
-	else if (file_mode == RNS::FileStream::MODE_APPEND) {
+	else if (file_mode == RNS::File::MODE_APPEND) {
 		// CBA This is the default write mode for nrf52 littlefs
 		mode = FILE_O_WRITE;
 	}
@@ -350,60 +350,56 @@ void FileSystem::dumpDir(const char* dir) {
 		return {RNS::Type::NONE};
 	}
 	File* file = new File(FS);
-	if (file == nullptr || !file->open(file_path, mode)) {
-		// CBA Isn't File* leaked on failure if not deleted here?!
-		if (file != nullptr) delete file;
+	if (!file->open(file_path, mode)) {
 		ERRORF("open_file: failed to open output file %s", file_path);
 		return {RNS::Type::NONE};
 	}
 	// Seek to beginning to overwrite (this is failing on nrf52)
-	//if (file_mode == RNS::FileStream::MODE_WRITE) {
+	//if (file_mode == RNS::File::MODE_WRITE) {
 	//	file->seek(0);
 	//	file->truncate(0);
 	//}
-	//TRACEF("open_file: successfully opened file %s", file_path);
-	return RNS::FileStream(new FileStream(file));
+	TRACEF("open_file: successfully opened file %s", file_path);
+	return RNS::File(new FileImpl(file));
 #else
 	const char* mode;
-	if (file_mode == RNS::FileStream::MODE_READ) {
+	if (file_mode == RNS::File::MODE_READ) {
 		mode = FILE_READ;
 	}
-	else if (file_mode == RNS::FileStream::MODE_WRITE) {
+	else if (file_mode == RNS::File::MODE_WRITE) {
 		mode = FILE_WRITE;
 	}
-	else if (file_mode == RNS::FileStream::MODE_APPEND) {
+	else if (file_mode == RNS::File::MODE_APPEND) {
 		mode = FILE_APPEND;
 	}
 	else {
 		ERRORF("open_file: unsupported mode %d", file_mode);
 		return {RNS::Type::NONE};
 	}
-	//TRACEF("open_file: opening file %s in mode %s", file_path, mode);
+	TRACEF("open_file: opening file %s in mode %s", file_path, mode);
 	// CBA Using copy constructor to obtain File*
 	File* file = new File(FS.open(file_path, mode));
 	if (file == nullptr || !(*file)) {
-		// CBA Isn't File* leaked on failure if not deleted here?!
-		if (file != nullptr) delete file;
 		ERRORF("open_file: failed to open output file %s", file_path);
 		return {RNS::Type::NONE};
 	}
-	//TRACEF("open_file: successfully opened file %s", file_path);
-	return RNS::FileStream(new FileStream(file));
+	TRACEF("open_file: successfully opened file %s", file_path);
+	return RNS::File(new FileImpl(file));
 #endif
 }
 
-/*virtua*/ bool FileSystem::remove_file(const char* file_path) {
-	//TRACEF("remove_file: removing file %s", file_path);
+/*virtua*/ bool FileSystemImpl::remove_file(const char* file_path) {
+	TRACEF("remove_file: removing file %s", file_path);
 	return FS.remove(file_path);
 }
 
-/*virtua*/ bool FileSystem::rename_file(const char* from_file_path, const char* to_file_path) {
-	//TRACEF("rename_file: renaming file %s to %s", from_file_path, to_file_path);
+/*virtua*/ bool FileSystemImpl::rename_file(const char* from_file_path, const char* to_file_path) {
+	TRACEF("rename_file: renaming file %s to %s", from_file_path, to_file_path);
 	return FS.rename(from_file_path, to_file_path);
 }
 
-/*virtua*/ bool FileSystem::directory_exists(const char* directory_path) {
-	//TRACEF("directory_exists: checking for existence of directory %s", directory_path);
+/*virtua*/ bool FileSystemImpl::directory_exists(const char* directory_path) {
+	TRACEF("directory_exists: checking for existence of directory %s", directory_path);
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	File file(FS);
 	if (file.open(directory_path, FILE_O_READ)) {
@@ -418,8 +414,8 @@ void FileSystem::dumpDir(const char* dir) {
 	return false;
 }
 
-/*virtua*/ bool FileSystem::create_directory(const char* directory_path) {
-	//TRACEF("create_directory: creating directory %s", directory_path);
+/*virtua*/ bool FileSystemImpl::create_directory(const char* directory_path) {
+	TRACEF("create_directory: creating directory %s", directory_path);
 	if (!FS.mkdir(directory_path)) {
 		ERRORF("create_directory: failed to create directory %s", directory_path);
 		return false;
@@ -427,8 +423,8 @@ void FileSystem::dumpDir(const char* dir) {
 	return true;
 }
 
-/*virtua*/ bool FileSystem::remove_directory(const char* directory_path) {
-	//TRACEF("remove_directory: removing directory %s", directory_path);
+/*virtua*/ bool FileSystemImpl::remove_directory(const char* directory_path) {
+	TRACEF("remove_directory: removing directory %s", directory_path);
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	if (!FS.rmdir_r(directory_path)) {
 #else
@@ -440,8 +436,8 @@ void FileSystem::dumpDir(const char* dir) {
 	return true;
 }
 
-/*virtua*/ std::list<std::string> FileSystem::list_directory(const char* directory_path, Callbacks::DirectoryListing callback /*= nullptr*/) {
-	//TRACEF("list_directory: listing directory %s", directory_path);
+/*virtua*/ std::list<std::string> FileSystemImpl::list_directory(const char* directory_path, Callbacks::DirectoryListing callback /*= nullptr*/) {
+	TRACEF("list_directory: listing directory %s", directory_path);
 	std::list<std::string> files;
 	File root = FS.open(directory_path);
 	if (!root) {
@@ -464,7 +460,7 @@ void FileSystem::dumpDir(const char* dir) {
 	return files;
 }
 
-/*virtual*/ size_t FileSystem::storage_size() {
+/*virtual*/ size_t FileSystemImpl::storage_size() {
 #if FS_TYPE == FS_TYPE_INTERNALFS
 	return totalBytes();
 #else
@@ -472,7 +468,7 @@ void FileSystem::dumpDir(const char* dir) {
 #endif
 }
 
-/*virtual*/ size_t FileSystem::storage_available() {
+/*virtual*/ size_t FileSystemImpl::storage_available() {
 #if FS_TYPE == FS_TYPE_INTERNALFS
 	return (totalBytes() - usedBytes());
 #else
