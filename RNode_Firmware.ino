@@ -234,32 +234,37 @@ RNS::Interface lora_interface(RNS::Type::NONE);
   // CBA microStore
   #if MCU_VARIANT == MCU_ESP32
     #if defined(USE_FLASHFS)
-      #include <microStore/impl/FlashFileSystemImpl.h>
-      microStore::FileSystem filesystem(new microStoreImpl::FlashFileSystemImpl());
+      #include <microStore/Adapters/FlashFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::FlashFileSystem()};
     #else
-      //#include <microStore/impl/SPIFFSFileSystemImpl.h>
-      //microStore::FileSystem filesystem(new microStoreImpl::SPIFFSFileSystemImpl());
-      //#include <microStore/impl/LittleFSFileSystemImpl.h>
-      //microStore::FileSystem filesystem(new microStoreImpl::LittleFSFileSystemImpl());
-      #include <microStore/impl/PosixFileSystemImpl.h>
-      microStore::FileSystem filesystem(new microStoreImpl::PosixFileSystemImpl());
+      //#include <microStore/Adapters/SPIFFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::SPIFFSFileSystem()};
+      //#include <microStore/Adapters/LittleFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::LittleFSFileSystem()};
+      #include <microStore/Adapters/PosixFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
     #endif
   #elif MCU_VARIANT == MCU_NRF52
     #if defined(USE_FLASHFS)
-      #include <microStore/impl/FlashFileSystemImpl.h>
-      microStore::FileSystem filesystem(new microStoreImpl::FlashFileSystemImpl());
+      #include <microStore/Adapters/FlashFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::FlashFileSystem()};
     #else
-      #include <microStore/impl/InternalFSSystemImpl.h>
-      microStore::FileSystem filesystem(new microStoreImpl::InternalFSFileSystemImpl());
+      #include <microStore/Adapters/InternalFSFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
     #endif
   #else
-    #include <microStore/impl/PosixFileSystemImpl.h>
-    microStore::FileSystem filesystem(new microStoreImpl::PosixFileSystemImpl());
+    #include <microStore/Adapters/PosixFileSystem.h>
+    microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
   #endif
   #else // RNS_USE_FS
-    microStore::FileSystem filesystem(new microStoreImpl::NoopFileSystemImpl());
+    microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
   #endif // RNS_USE_FS
 #endif  // HAS_RNS
+
+// CBA For printf
+int _write(int file, char *ptr, int len) {
+    return Serial.write(ptr, len);
+}
 
 void setup() {
 
@@ -278,6 +283,13 @@ void setup() {
   }
   // CBA Test
   delay(2000);
+
+  printf("Total SRAM: %u bytes\n", RNS::Utilities::Memory::heap_size());
+  printf("Free SRAM:  %u bytes\n", RNS::Utilities::Memory::heap_available());
+#if defined(ESP32)
+	printf("Total PSRAM: %u bytes\n", ESP.getPsramSize());
+#endif
+	//printf("Total flash: %zu bytes\n", RNS::Utilities::OS::storage_size());
 
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32
@@ -573,17 +585,7 @@ void setup() {
   try {
     // CBA Init filesystem
     HEAD("Initializing filesystem...", RNS::LOG_TRACE);
-#if 0
-#if defined(RNS_USE_FS)
-    filesystem = new FileSystemImpl();
-    ((FileSystemImpl*)filesystem.get())->init();
-#else
-    filesystem = new NoopFileSystem();
-    ((FileSystemImpl*)filesystem.get())->init();
-#endif
-#else
     filesystem.init();
-#endif
 
     // Remove legacy files
     if (filesystem.exists("/destination_table")) filesystem.remove("/destination_table");
@@ -628,7 +630,8 @@ void setup() {
 #endif // !NDEBUG && RNS_USE_FS
 
     // CBA Start RNS
-    if (hw_ready) {
+    //if (hw_ready) {
+    if (true) {
 
       // Set sane memory limits based on hardware-specific availability
 #if defined(BOARD_HAS_PSRAM)
@@ -691,7 +694,7 @@ void setup() {
       RNS::Utilities::OS::set_loop_callback(&loop);
 
       // CBA load/create local destination for admin node
-/*
+#if 0
       RNS::Identity identity = {RNS::Type::NONE};
       std::string local_identity_path = RNS::Reticulum::_storagepath + "/local_identity";
       if (RNS::Utilities::OS::file_exists(local_identity_path.c_str())) {
@@ -706,7 +709,7 @@ void setup() {
         RNS::verbose("Loaded local identity from storage");
       }
       RNS::Destination destination(identity, RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
-*/
+#endif
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
