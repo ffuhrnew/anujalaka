@@ -20,7 +20,6 @@
 #include <Interface.h>
 #include <Log.h>
 #include <Bytes.h>
-#include <queue>
 #endif
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
@@ -29,13 +28,6 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "Utilities.h"
-
-// CBA FileSystem
-#if defined(RNS_USE_FS)
-#include "FileSystem.h"
-#else
-#include "NoopFileSystem.h"
-#endif
 
 // CBA SD
 #if HAS_SDCARD
@@ -238,8 +230,43 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
 // CBA RNS
 RNS::Reticulum reticulum(RNS::Type::NONE);
 RNS::Interface lora_interface(RNS::Type::NONE);
-RNS::FileSystem filesystem(RNS::Type::NONE);
+#if defined(RNS_USE_FS)
+  // CBA microStore
+  #if MCU_VARIANT == MCU_ESP32
+    #if defined(USE_FLASHFS)
+      #include <microStore/Adapters/FlashFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::FlashFileSystem()};
+    #else
+      //#include <microStore/Adapters/SPIFFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::SPIFFSFileSystem()};
+      //#include <microStore/Adapters/LittleFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::LittleFSFileSystem()};
+      #include <microStore/Adapters/PosixFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
+    #endif
+  #elif MCU_VARIANT == MCU_NRF52
+    #if defined(USE_FLASHFS)
+      #include <microStore/Adapters/FlashFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::FlashFileSystem()};
+    #else
+      #include <microStore/Adapters/InternalFSFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
+    #endif
+  #else
+    #include <microStore/Adapters/PosixFileSystem.h>
+    microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
+  #endif
+  #else // RNS_USE_FS
+    microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
+  #endif // RNS_USE_FS
 #endif  // HAS_RNS
+
+// CBA For printf
+int _write(int file, char *ptr, int len) {
+    size_t wrote = Serial.write(ptr, len);
+    Serial.flush();
+    return wrote;
+}
 
 void setup() {
 
@@ -258,6 +285,13 @@ void setup() {
   }
   // CBA Test
   delay(2000);
+
+  printf("Total SRAM: %u bytes\n", RNS::Utilities::Memory::heap_size());
+  printf("Free SRAM:  %u bytes\n", RNS::Utilities::Memory::heap_available());
+#if defined(ESP32)
+	printf("Total PSRAM: %u bytes\n", ESP.getPsramSize());
+#endif
+	//printf("Total flash: %zu bytes\n", RNS::Utilities::OS::storage_size());
 
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32
@@ -552,82 +586,75 @@ void setup() {
 #ifdef HAS_RNS
   try {
     // CBA Init filesystem
-#if defined(RNS_USE_FS)
-    filesystem = new FileSystem();
-    ((FileSystem*)filesystem.get())->init();
-#else
-    filesystem = new NoopFileSystem();
-    ((FileSystem*)filesystem.get())->init();
-#endif
+    HEAD("Initializing filesystem...", RNS::LOG_TRACE);
+    filesystem.init();
 
-    HEAD("Registering filesystem...", RNS::LOG_TRACE);
+    // Remove legacy files
+    if (filesystem.exists("/destination_table")) filesystem.remove("/destination_table");
+    if (filesystem.isDirectory("/cache")) {
+      filesystem.listDirectory("/cache", [&](const char* path) -> void {
+        char rmpath[64];
+        snprintf(rmpath, 64, "/cache/%s", path);
+        filesystem.remove(rmpath);
+      });
+      filesystem.rmdir("/cache");
+    }
+
+    // If filesystem is essentially full then clear all path store files
+    if (filesystem.storageAvailable() < 1024) {
+      WARNING("FileSystem is full, clearing space...");
+      // CBA Delete the path store index file to force a rebuild
+      filesystem.remove("/path_store_index.dat");
+      // CBA Remove all path store data files
+      filesystem.remove("/path_store_0.dat");
+      filesystem.remove("/path_store_1.dat");
+      filesystem.remove("/path_store_2.dat");
+      filesystem.remove("/path_store_3.dat");
+      filesystem.remove("/path_store_4.dat");
+      filesystem.remove("/path_store_5.dat");
+      filesystem.remove("/path_store_6.dat");
+      filesystem.remove("/path_store_7.dat");
+    }
+
+    TRACE("Registering filesystem...");
     RNS::Utilities::OS::register_filesystem(filesystem);
 
-#ifndef NDEBUG
-    //filesystem.remove_directory("/cache");
-    //filesystem.remove_file("/destination_table");
-    //filesystem.reformat();
-    TRACE("Listing filesystem...");
-#if defined(RNS_USE_FS)
-    //FileSystem::listDir("/");
+#if !defined(NDEBUG) && defined(RNS_USE_FS)
+#if 0
+    filesystem.format();
 #endif
-    TRACE("Finished listing");
-    //TRACE("Dumping filesystem...");
-    //FileSystem::dumpDir("/");
-    //TRACE("Finished dumping");
-    //reticulum.clear_caches();
-
-    // CBA DEBUG
-/*
-    std::list<std::string> files = filesystem.list_directory("/cache");
-    for (auto& file : files) {
-      Serial.print("  FILE: ");
-      Serial.println(file.c_str());
-      //RNS::Bytes content = filesystem.read_file(file.c_str());
-      //DEBUG(std::string("FILE: ") + file);
-      //DEBUG(content.toString());
-      }
-*/
-/*
-    TRACE("FILE: destination_table");
-    RNS::Bytes content;
-    if (filesystem.read_file("/destination_table", content) > 0) {
-      TRACE(content.toString().c_str());
-    }
-*/
-#endif  // NDEBUG
+#if 1
+    Serial.println("Listing filesystem /:");
+    filesystem.listDirectory("/", [&](const char* path) -> void {
+      Serial.println(path);
+    });
+#endif
+#endif // !NDEBUG && RNS_USE_FS
 
     // CBA Start RNS
-    if (hw_ready) {
+    //if (hw_ready) {
+    if (true) {
 
       // Set sane memory limits based on hardware-specific availability
-#if defined(BOARD_HAS_PSRAM)
-      RNS::Transport::path_table_maxsize(500);
-      RNS::Transport::path_table_maxpersist(500);
-      RNS::Transport::announce_table_maxsize(500);
-      RNS::Transport::hashlist_maxsize(500);
-      RNS::Identity::known_destinations_maxsize(500);
-      RNS::Transport::max_pr_tags(500);
-#else
-      RNS::Transport::path_table_maxsize(50);
-      RNS::Transport::path_table_maxpersist(50);
+      RNS::Transport::path_table_maxsize(URTN_PATH_TABLE_MAX_RECS);
       RNS::Transport::announce_table_maxsize(50);
       RNS::Transport::hashlist_maxsize(50);
       RNS::Identity::known_destinations_maxsize(50);
       RNS::Transport::max_pr_tags(50);
-#endif
       RNS::Reticulum::clean_interval(60*15); // 60 minutes
       //RNS::Reticulum::clean_interval(60*15); // 15 minutes
       RNS::Reticulum::persist_interval(60*60); // 60 minutes
       //RNS::Reticulum::persist_interval(60*10); // 10 minutes
       //RNS::Reticulum::persist_interval(60); // 1 minute
 
+      //reticulum.clear_caches();
+
       // Configure callbacks
       RNS::set_log_callback(&on_log);
       RNS::Transport::set_receive_packet_callback(on_receive_packet);
       RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
 
-      Serial.write("Starting RNS...\r\n");
+      HEAD("Starting RNS...\r\n", RNS::LOG_VERBOSE);
 #if defined(RNS_MEM_LOG)
       RNS::loglevel(RNS::LOG_MEM);
 #else
@@ -659,7 +686,7 @@ void setup() {
       RNS::Utilities::OS::set_loop_callback(&loop);
 
       // CBA load/create local destination for admin node
-/*
+#if 0
       RNS::Identity identity = {RNS::Type::NONE};
       std::string local_identity_path = RNS::Reticulum::_storagepath + "/local_identity";
       if (RNS::Utilities::OS::file_exists(local_identity_path.c_str())) {
@@ -674,7 +701,7 @@ void setup() {
         RNS::verbose("Loaded local identity from storage");
       }
       RNS::Destination destination(identity, RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
-*/
+#endif
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
@@ -685,6 +712,7 @@ void setup() {
         TRACEF("TX Power: %d dBm", lora_txp);
         TRACEF("Spreading Factor: %d", lora_sf);
         TRACEF("Coding Rate: %d", lora_cr);
+        HEAD("RNS Transport is READY!", RNS::LOG_TRACE);
       }
       else {
         HEAD("RNS transport mode is DISABLED", RNS::LOG_INFO);
