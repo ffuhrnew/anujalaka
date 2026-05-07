@@ -177,7 +177,7 @@ void on_log(const char* msg, RNS::LogLevel level) {
 #ifdef HAS_SDCARD
 	File file = SD.open("/logfile.txt", FILE_APPEND);
 	if (file) {
-    file.write((uint8_t*)line.c_str(), line.length());
+    file.write((uint8_t*)msg, strlen(msg));
     file.close();
   }
 #endif  // HAS_SDCARD
@@ -193,7 +193,7 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
     file.write((uint8_t*)line.c_str(), line.length());
     file.close();
   }
-	RNS::Packet packet({RNS::Type::NONE}, raw);
+	RNS::Packet packet(raw);
 	if (packet.unpack()) {
     String line = RNS::getTimeString() + String(" recv: ") + String(packet.dumpString().c_str()) + "\n";
     File file = SD.open("/tracedetails.txt", FILE_APPEND);
@@ -215,7 +215,7 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
     file.write((uint8_t*)line.c_str(), line.length());
     file.close();
   }
-	RNS::Packet packet({RNS::Type::NONE}, raw);
+	RNS::Packet packet(raw);
 	if (packet.unpack()) {
     String line = RNS::getTimeString() + String(" send: ") + String(packet.dumpString().c_str()) + "\n";
     File file = SD.open("/tracedetails.txt", FILE_APPEND);
@@ -234,8 +234,8 @@ RNS::Interface lora_interface(RNS::Type::NONE);
   // CBA microStore
   #if MCU_VARIANT == MCU_ESP32
     #if defined(USE_FLASHFS)
-      #include <microStore/Adapters/FlashFileSystem.h>
-      microStore::FileSystem filesystem{microStore::Adapters::FlashFileSystem()};
+      #include <microStore/Adapters/FlashFSFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::FlashFSFileSystem()};
     #else
       //#include <microStore/Adapters/SPIFFSFileSystem.h>
       //microStore::FileSystem filesystem{microStore::Adapters::SPIFFSFileSystem()};
@@ -245,9 +245,12 @@ RNS::Interface lora_interface(RNS::Type::NONE);
       microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
     #endif
   #elif MCU_VARIANT == MCU_NRF52
-    #if defined(USE_FLASHFS)
-      #include <microStore/Adapters/FlashFileSystem.h>
-      microStore::FileSystem filesystem{microStore::Adapters::FlashFileSystem()};
+    #if defined(USE_FLASHFS) && BOARD_MODEL == BOARD_RAK4631
+      //#include <flash_devices.h>
+      //static const SPIFlash_Device_t device = GD25Q16C;
+      #include <microStore/Adapters/FlashFSFileSystem.h>
+      static const SPIFlash_Device_t device = RAK15001;
+      microStore::FileSystem filesystem{microStore::Adapters::FlashFSFileSystem(&device)};
     #else
       #include <microStore/Adapters/InternalFSFileSystem.h>
       microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
@@ -554,7 +557,7 @@ void setup() {
 
   if (op_mode != MODE_TNC) LoRa->setFrequency(0);
 
-  // CBA SD
+// CBA SD
 #ifdef HAS_SDCARD
   pinMode(SDCARD_MISO, INPUT_PULLUP);
   SDSPI.begin(SDCARD_SCLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS);
