@@ -245,16 +245,9 @@ RNS::Interface lora_interface(RNS::Type::NONE);
       microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
     #endif
   #elif MCU_VARIANT == MCU_NRF52
-    #if defined(USTORE_USE_FLASHFS) && BOARD_MODEL == BOARD_RAK4631
-      //#include <flash_devices.h>
-      //static const SPIFlash_Device_t device = GD25Q16C;
-      #include <microStore/Adapters/FlashFSFileSystem.h>
-      static const SPIFlash_Device_t device = URTN_FLASH_DEVICE;
-      microStore::FileSystem filesystem{microStore::Adapters::FlashFSFileSystem(&device)};
-    #else
-      #include <microStore/Adapters/InternalFSFileSystem.h>
-      microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
-    #endif
+    #include <microStore/Adapters/InternalFSFileSystem.h>
+    #include <microStore/Adapters/FlashFSFileSystem.h>
+    microStore::FileSystem filesystem;
   #else
     #include <microStore/Adapters/PosixFileSystem.h>
     microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
@@ -289,10 +282,10 @@ void setup() {
   // CBA Test
   delay(2000);
 
-  printf("Total SRAM: %u bytes\n", RNS::Utilities::Memory::heap_size());
-  printf("Free SRAM:  %u bytes\n", RNS::Utilities::Memory::heap_available());
+  printf("Total SRAM:  %7u bytes\n", RNS::Utilities::Memory::heap_size());
+  printf("Free SRAM:   %7u bytes\n", RNS::Utilities::Memory::heap_available());
 #if defined(ESP32)
-	printf("Total PSRAM: %u bytes\n", ESP.getPsramSize());
+	printf("Total PSRAM: %7u bytes\n", ESP.getPsramSize());
 #endif
 	//printf("Total flash: %zu bytes\n", RNS::Utilities::OS::storage_size());
 
@@ -587,10 +580,45 @@ void setup() {
 #endif
 
 #ifdef HAS_RNS
+
+  // Set sane default memory limits based on hardware-specific availability
+  // (note these may be adjusted dynamically based on detected hardware below)
+  RNS::Transport::path_table_maxsize(URTN_PATH_TABLE_MAX_RECS);
+  RNS::Transport::announce_table_maxsize(50);
+  RNS::Transport::hashlist_maxsize(50);
+  RNS::Identity::known_destinations_maxsize(50);
+  RNS::Transport::max_pr_tags(50);
+  RNS::Reticulum::clean_interval(60*15); // 60 minutes
+  //RNS::Reticulum::clean_interval(60*15); // 15 minutes
+  RNS::Reticulum::persist_interval(60*60); // 60 minutes
+  //RNS::Reticulum::persist_interval(60*10); // 10 minutes
+  //RNS::Reticulum::persist_interval(60); // 1 minute
+
   try {
     // CBA Init filesystem
     HEAD("Initializing filesystem...", RNS::LOG_TRACE);
+#if MCU_VARIANT == MCU_NRF52
+    // First attempt to initialize RAK15001 flash
+    TRACE("Looking for RAK15001 flash...");
+    static const SPIFlash_Device_t device_rak15001 = RAK15001;
+    filesystem = microStore::Adapters::FlashFSFileSystem(&device_rak15001);
+    if (filesystem.init()) {
+      TRACE("Initialized RAK15001 flash");
+      // Raise path store limits to account for larger external flash size
+      RNS::Transport::path_table_maxsize(500);
+      RNS::Transport::path_store_segment_size(24576);
+      RNS::Transport::path_store_segment_count(8);
+    }
+    else {
+      // Finaly attempt to initialize internl flash
+      TRACE("Using internal flash...");
+      filesystem = microStore::Adapters::InternalFSFileSystem();
+      filesystem.init();
+      TRACE("Initialized internal flash");
+    }
+#else
     filesystem.init();
+#endif
 
     // Remove legacy files
     if (filesystem.exists("/destination_table")) filesystem.remove("/destination_table");
@@ -638,18 +666,6 @@ void setup() {
     // CBA Start RNS
     //if (hw_ready) {
     if (true) {
-
-      // Set sane memory limits based on hardware-specific availability
-      RNS::Transport::path_table_maxsize(URTN_PATH_TABLE_MAX_RECS);
-      RNS::Transport::announce_table_maxsize(50);
-      RNS::Transport::hashlist_maxsize(50);
-      RNS::Identity::known_destinations_maxsize(50);
-      RNS::Transport::max_pr_tags(50);
-      RNS::Reticulum::clean_interval(60*15); // 60 minutes
-      //RNS::Reticulum::clean_interval(60*15); // 15 minutes
-      RNS::Reticulum::persist_interval(60*60); // 60 minutes
-      //RNS::Reticulum::persist_interval(60*10); // 10 minutes
-      //RNS::Reticulum::persist_interval(60); // 1 minute
 
       //reticulum.clear_caches();
 
