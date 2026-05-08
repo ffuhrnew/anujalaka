@@ -47,6 +47,7 @@ def post_upload(source, target, env):
         time.sleep(5)
         # device provisioning is incomplete and only currently appropriate for 915MHz RAK4631
         device_provision(env)
+        time.sleep(5)
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
         #firmware_package(env)

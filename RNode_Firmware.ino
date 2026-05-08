@@ -233,9 +233,9 @@ RNS::Interface lora_interface(RNS::Type::NONE);
 #if defined(RNS_USE_FS)
   // CBA microStore
   #if MCU_VARIANT == MCU_ESP32
-    #if defined(USE_FLASHFS)
-      #include <microStore/Adapters/FlashFSFileSystem.h>
-      microStore::FileSystem filesystem{microStore::Adapters::FlashFSFileSystem()};
+    #if defined(USTORE_USE_SD)
+      #include <microStore/Adapters/SDFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::SDFileSystem(SDCARD_SCLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS)};
     #else
       //#include <microStore/Adapters/SPIFFSFileSystem.h>
       //microStore::FileSystem filesystem{microStore::Adapters::SPIFFSFileSystem()};
@@ -245,11 +245,11 @@ RNS::Interface lora_interface(RNS::Type::NONE);
       microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
     #endif
   #elif MCU_VARIANT == MCU_NRF52
-    #if defined(USE_FLASHFS) && BOARD_MODEL == BOARD_RAK4631
+    #if defined(USTORE_USE_FLASHFS) && BOARD_MODEL == BOARD_RAK4631
       //#include <flash_devices.h>
       //static const SPIFlash_Device_t device = GD25Q16C;
       #include <microStore/Adapters/FlashFSFileSystem.h>
-      static const SPIFlash_Device_t device = RAK15001;
+      static const SPIFlash_Device_t device = URTN_FLASH_DEVICE;
       microStore::FileSystem filesystem{microStore::Adapters::FlashFSFileSystem(&device)};
     #else
       #include <microStore/Adapters/InternalFSFileSystem.h>
@@ -629,6 +629,7 @@ void setup() {
 #if 1
     Serial.println("Listing filesystem /:");
     filesystem.listDirectory("/", [&](const char* path) -> void {
+      Serial.print("  ");
       Serial.println(path);
     });
 #endif
