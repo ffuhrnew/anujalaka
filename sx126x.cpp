@@ -97,6 +97,14 @@
   #define SPI spiModem
 #endif
 
+#if HAS_LORA_PA
+  uint8_t lora_pa_model = LORA_PA_MODEL;
+#endif
+
+#if HAS_LORA_LNA
+  int lora_lna_gain = LORA_LNA_GAIN;
+#endif
+
 extern SPIClass SPI;
 
 #define MAX_PKT_LENGTH 255
@@ -275,9 +283,24 @@ void sx126x::setPacketParams(long preamble_symbols, uint8_t headermode, uint8_t 
   buf[4] = crc;
   buf[5] = 0x00; // standard IQ setting (no inversion)
   buf[6] = 0x00; // unused params
-  buf[7] = 0x00; 
-  buf[8] = 0x00; 
+  buf[7] = 0x00;
+  buf[8] = 0x00;
   executeOpcode(OP_PACKET_PARAMS_6X, buf, 9);
+
+  // SX1262 errata section 15.4: IQ polarity is inverted compared to
+  // SX1276. The SetPacketParams command resets register 0x0736 to an
+  // incorrect default. For standard IQ (no inversion), bit 2 must be
+  // SET after every SetPacketParams call. For inverted IQ, bit 2 must
+  // be CLEARED. Without this fix, LoRa RX demodulation fails silently
+  // while TX continues to work.
+  uint8_t iqreg = readRegister(0x0736);
+  if (buf[5] == 0x00) {
+    // Standard IQ: set bit 2
+    writeRegister(0x0736, iqreg | 0x04);
+  } else {
+    // Inverted IQ: clear bit 2
+    writeRegister(0x0736, iqreg & ~0x04);
+  }
 }
 
 void sx126x::reset(void) {
@@ -348,7 +371,22 @@ int sx126x::begin(long frequency) {
   setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode);
 
   #if HAS_LORA_PA
-    #if LORA_PA_GC1109
+    if (lora_pa_model == LORA_PA_UNKNOWN) {
+      #if BOARD_MODEL == BOARD_HELTEC32_V4
+        
+        pinMode(LORA_PA_PWR_EN, OUTPUT);
+        pinMode(LORA_PA_CSD, INPUT);
+        digitalWrite(LORA_PA_PWR_EN, HIGH); delay(5);
+        if (digitalRead(LORA_PA_CSD) == HIGH) {
+          lora_pa_model = LORA_PA_KCT8103L;
+          lora_lna_gain = LORA_LNA_KCT8103L_GAIN;
+        } else {
+          lora_pa_model = LORA_PA_GC1109;
+        }
+      #endif
+    }
+
+    if (lora_pa_model == LORA_PA_GC1109) {
       // Enable Vfem_ctl for supply to
       // PA power net.
       pinMode(LORA_PA_PWR_EN, OUTPUT);
@@ -373,7 +411,26 @@ int sx126x::begin(long frequency) {
       // is driven by the SX1262 DIO2
       // pin directly, so we do not
       // need to manually raise this.
-    #endif
+
+    } else if (lora_pa_model == LORA_PA_KCT8103L) {
+      // Enable Vfem_ctl for supply to
+      // PA power net.
+      pinMode(LORA_PA_PWR_EN, OUTPUT);
+      digitalWrite(LORA_PA_PWR_EN, HIGH);
+
+      // Enable KCT8103L chip
+      pinMode(LORA_PA_CSD, OUTPUT);
+      digitalWrite(LORA_PA_CSD, HIGH);
+
+      // Enable receive LNA
+      pinMode(LORA_PA_CTX, OUTPUT);
+      digitalWrite(LORA_PA_CTX, LOW);
+
+      // On Heltec V4.3, the PA CPS pin
+      // is driven by the SX1262 DIO2
+      // pin directly, so we do not
+      // need to manually raise this.
+    }
   #endif
 
   return 1;
@@ -383,13 +440,15 @@ void sx126x::end() { sleep(); SPI.end(); _preinit_done = false; }
 
 int sx126x::beginPacket(int implicitHeader) {
   #if HAS_LORA_PA
-    #if LORA_PA_GC1109
+    if (lora_pa_model == LORA_PA_GC1109) {
       // Enable PA CPS for transmit
       // digitalWrite(LORA_PA_CPS, HIGH);
       // Disabled since we're keeping it
       // on permanently as long as the
       // radio is powered up.
-    #endif
+    } else if (lora_pa_model == LORA_PA_KCT8103L) {
+      digitalWrite(LORA_PA_CTX, HIGH);
+    }
   #endif
 
   standby();
@@ -477,7 +536,7 @@ int ISR_VECT sx126x::currentRssi() {
   executeOpcodeRead(OP_CURRENT_RSSI_6X, &byte, 1);
   int rssi = -(int(byte)) / 2;
   #if HAS_LORA_LNA
-    rssi -= LORA_LNA_GAIN;
+    rssi -= lora_lna_gain;
   #endif
   return rssi;
 }
@@ -493,7 +552,7 @@ int ISR_VECT sx126x::packetRssi() {
   executeOpcodeRead(OP_PACKET_STATUS_6X, buf, 3);
   int pkt_rssi = -buf[0] / 2;
   #if HAS_LORA_LNA
-    pkt_rssi -= LORA_LNA_GAIN;
+    pkt_rssi -= lora_lna_gain;
   #endif
   return pkt_rssi;
 }
@@ -604,7 +663,7 @@ void sx126x::onReceive(void(*callback)(int)){
 
 void sx126x::receive(int size) {
   #if HAS_LORA_PA
-    #if LORA_PA_GC1109
+    if (lora_pa_model == LORA_PA_GC1109) {
       // Disable PA CPS for receive
       // digitalWrite(LORA_PA_CPS, LOW);
       // That turned out to be a bad idea.
@@ -612,7 +671,9 @@ void sx126x::receive(int size) {
       // on and off too quickly. We'll keep
       // it on permanently, as long as the
       // radio is powered up.
-    #endif
+    } else if (lora_pa_model == LORA_PA_KCT8103L) {
+      digitalWrite(LORA_PA_CTX, LOW);
+    }
   #endif
 
   if (size > 0) {
@@ -738,7 +799,17 @@ void sx126x::handleLowDataRate() {
 }
 
 // TODO: Check if there's anything the sx1262 can do here
-void sx126x::optimizeModemSensitivity(){ }
+// SX1262 errata section 15.1: Modulation quality with 500 kHz LoRa BW.
+// Register 0x0889 bit 2 must be cleared for 500 kHz, set for all other
+// bandwidths. Improves receiver sensitivity at non-500 kHz bandwidths.
+void sx126x::optimizeModemSensitivity(){
+  uint8_t reg = readRegister(0x0889);
+  if (getSignalBandwidth() == 500E3) {
+    writeRegister(0x0889, reg & 0xFB); // clear bit 2
+  } else {
+    writeRegister(0x0889, reg | 0x04); // set bit 2
+  }
+}
 
 void sx126x::setSignalBandwidth(long sbw) {
   if (sbw <= 7.8E3)        { _bw = 0x00; }
