@@ -3,7 +3,7 @@
 
 #include "Boards.h"
 
-#if MODEM == SX1262
+#if MODEM == SX1262 || MODEM == MODEM_RUNTIME
 #include "sx126x.h"
 
 #if MCU_VARIANT == MCU_ESP32
@@ -125,7 +125,7 @@ sx126x::sx126x() :
   _crcMode(1),
   _fifo_tx_addr_ptr(0),
   _fifo_rx_addr_ptr(0),
-  _packet({0}),
+  _packet{0},
   _preinit_done(false),
   _onReceive(NULL)
 { setTimeout(0); }
@@ -337,7 +337,7 @@ void sx126x::calibrate_image(long frequency) {
   waitOnBusy();
 }
 
-int sx126x::begin(long frequency) {
+int sx126x::begin(uint32_t frequency) {
   reset();
   
   if (_busy != -1) { pinMode(_busy, INPUT); }
@@ -492,10 +492,10 @@ int sx126x::endPacket() {
   if (timed_out) { return 0; } else { return 1; }
 }
 
-unsigned long preamble_detected_at = 0;
+static unsigned long preamble_detected_at = 0;
 extern long lora_preamble_time_ms;
 extern long lora_header_time_ms;
-bool false_preamble_detected = false;
+static bool false_preamble_detected = false;
 
 bool sx126x::dcd() {
   uint8_t buf[2] = {0}; executeOpcodeRead(OP_GET_IRQ_STATUS_6X, buf, 2);
@@ -644,7 +644,7 @@ void sx126x::onReceive(void(*callback)(int)){
     buf[7] = 0x00;
     executeOpcode(OP_SET_IRQ_FLAGS_6X, buf, 8);
 
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
@@ -653,7 +653,7 @@ void sx126x::onReceive(void(*callback)(int)){
 
   } else {
     detachInterrupt(digitalPinToInterrupt(_dio0));
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
@@ -748,7 +748,7 @@ void sx126x::setTxPower(int level, int outputPin) {
 
 uint8_t sx126x::getTxPower() { return _txp; }
 
-void sx126x::setFrequency(long frequency) {
+void sx126x::setFrequency(uint32_t frequency) {
   _frequency = frequency;
   uint8_t buf[4];
   uint32_t freq = (uint32_t)((double)frequency / (double)FREQ_STEP_6X);
@@ -774,7 +774,7 @@ void sx126x::setSpreadingFactor(int sf) {
   setModulationParams(sf, _bw, _cr, _ldro);
 }
 
-long sx126x::getSignalBandwidth() {
+uint32_t sx126x::getSignalBandwidth() {
   int bw = _bw;
   switch (bw) {
     case 0x00: return 7.8E3;
@@ -811,7 +811,7 @@ void sx126x::optimizeModemSensitivity(){
   }
 }
 
-void sx126x::setSignalBandwidth(long sbw) {
+void sx126x::setSignalBandwidth(uint32_t sbw) {
   if (sbw <= 7.8E3)        { _bw = 0x00; }
   else if (sbw <= 10.4E3)  { _bw = 0x08; }
   else if (sbw <= 15.6E3)  { _bw = 0x01; }
@@ -890,7 +890,7 @@ void ISR_VECT sx126x::handleDio0Rise() {
 }
 
 void ISR_VECT sx126x::onDio0Rise() {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     sx126x_modem._dio0_pending = true;
   #else
     sx126x_modem.handleDio0Rise();
