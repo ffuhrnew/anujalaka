@@ -15,13 +15,7 @@
 
 // CBA Reticulum includes must come before local to avoid collision with local defines
 #ifdef HAS_RNS
-#include <Provisioning/Provisioning.h>
-#include <Transport.h>
-#include <Reticulum.h>
-#include <Identity.h>
-#include <Interface.h>
-#include <Log.h>
-#include <Bytes.h>
+#include <microReticulum.h>
 #endif
 #include "Provisioning.h"
 //#include "LoRaInterface.h"

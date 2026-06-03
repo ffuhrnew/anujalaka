@@ -20,10 +20,7 @@
 // CBA NOTE: Can *NOT* include "Utilities.h" here due to potential conflict with <MsgPack.h>
 //#include "Utilities.h"
 
-#include <Reticulum.h>
-#include <Interface.h>
-#include <Log.h>
-#include <Bytes.h>
+#include <microReticulum.h>
 
 extern uint32_t lora_bitrate;
 extern volatile uint8_t queue_height;

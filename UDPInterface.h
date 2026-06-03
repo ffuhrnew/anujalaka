@@ -15,10 +15,7 @@
 
 #pragma once
 
-#include <Reticulum.h>
-#include <Interface.h>
-#include <Log.h>
-#include <Bytes.h>
+#include <microReticulum.h>
 
 #include <WiFi.h>
 #include <WiFiUdp.h>

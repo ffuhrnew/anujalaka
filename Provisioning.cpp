@@ -25,8 +25,8 @@
 #define CMD_LOG           0x80
 #define CMD_PROVISION_RSP 0x87
 
-#include <Interface.h>
-#include <Provisioning/Provisioning.h>
+#include <microReticulum/Interface.h>
+#include <microReticulum/Provisioning/Provisioning.h>
 
 #include <string>
 #include <vector>

@@ -19,10 +19,10 @@
 
 #include "Config.h"
 
-#include <Interface.h>
-#include <Identity.h>
-#include <Utilities/OS.h>
-#include <Bytes.h>
+#include <microReticulum/Interface.h>
+#include <microReticulum/Identity.h>
+#include <microReticulum/Utilities/OS.h>
+#include <microReticulum/Bytes.h>
 // CBA NOTE Thge following <MsgPack.h> include *MUST* precede the "Utilities.h" include
 #include <MsgPack.h>
 

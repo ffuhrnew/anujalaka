@@ -15,7 +15,7 @@
 
 #ifdef HAS_PROVISIONING
 
-#include <Bytes.h>
+#include <microReticulum/Bytes.h>
 
 #include <stddef.h>
 #include <stdint.h>

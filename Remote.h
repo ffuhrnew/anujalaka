@@ -16,7 +16,7 @@
 #include <WiFi.h>
 #if defined(UDP_TRANSPORT)
 #include <WiFiUdp.h>
-#include <Bytes.h>
+#include <microReticulum/Bytes.h>
 #endif
 
 #if CONFIG_IDF_TARGET_ESP32

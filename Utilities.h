@@ -129,7 +129,7 @@ uint8_t boot_vector = 0x00;
 #endif
 
 #ifdef HAS_RNS
-#include <Reticulum.h>
+#include <microReticulum.h>
 extern RNS::Reticulum reticulum;
 #endif
 
