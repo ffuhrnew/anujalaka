@@ -16,15 +16,17 @@
 // CBA Reticulum includes must come before local to avoid collision with local defines
 #ifdef HAS_RNS
 #include <microReticulum.h>
-#endif
 #include "Provisioning.h"
+#if defined(LORA_TRANSPORT)
 //#include "LoRaInterface.h"
+#endif
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
 #endif
 #ifdef URTN_STATS_PAGES
 #include "Pages.h"
 #endif
+#endif // HAS_RNS
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -70,6 +72,7 @@ volatile bool serial_buffering = false;
 #endif
 
 bool kiss_framed_logs = true;
+bool nomadnet_enabled = true;
 
 #if HAS_CONSOLE
   #include "Console.h"
@@ -184,7 +187,6 @@ protected:
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
   if (kiss_framed_logs) {
-Serial.print("[K]");
     // Compose "<timestamp> [<level>] <msg>" into a stack buffer to avoid
     // String heap allocation. 256 bytes covers the longest practical line.
     char line[256];
@@ -197,7 +199,6 @@ Serial.print("[K]");
     kiss_indicate_log(line, (size_t)n);
   }
   else {
-Serial.print("[S]");
     // Using individual Serial.print statements to avoid memory allocation for String
     Serial.print(RNS::getTimeString());
     Serial.print(" [");
@@ -283,7 +284,7 @@ RNS::Interface udp_interface(RNS::Type::NONE);
   #elif MCU_VARIANT == MCU_NRF52
     #include <microStore/Adapters/InternalFSFileSystem.h>
     #include <microStore/Adapters/FlashFSFileSystem.h>
-    microStore::FileSystem filesystem;
+    microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
   #else
     #include <microStore/Adapters/PosixFileSystem.h>
     microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
@@ -325,8 +326,10 @@ void setup() {
   // CBA Test
   delay(2000);
 
+#ifdef HAS_RNS
   printf("Total SRAM:  %7u bytes\n", RNS::Utilities::Memory::heap_size());
   printf("Free SRAM:   %7u bytes\n", RNS::Utilities::Memory::heap_available());
+#endif
 #if defined(ESP32)
 	printf("Total PSRAM: %7u bytes\n", ESP.getPsramSize());
 #endif
@@ -629,24 +632,21 @@ void setup() {
   pinMode(SDCARD_MISO, INPUT_PULLUP);
   SDSPI.begin(SDCARD_SCLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS);
   if (!SD.begin(SDCARD_CS, SDSPI)) {
-      Serial.println("setupSDCard FAIL");
+      printf("setupSDCard FAIL\n");
   } else {
       uint32_t cardSize = SD.cardSize() / (1024 * 1024);
-      Serial.print("setupSDCard PASS . SIZE = ");
-      Serial.print(cardSize / 1024.0);
-      Serial.println(" GB");
+      printf("setupSDCard PASS . SIZE = %u GB\n", cardSize / 1024.0);
       SD.remove("/logfile");
       SD.remove("/logfile.txt");
       SD.remove("/tracefile");
       SD.remove("/tracedetails");
       SD.remove("/tracefile.txt");
       SD.remove("/tracedetails.txt");
-      Serial.println("DIR: /");
+      printf("DIR: /\n");
       File root = SD.open("/");
       File file = root.openNextFile();
       while(file){
-          Serial.print("  FILE: ");
-          Serial.println(file.name());
+          printf("  FILE: %s\n", file.name());
           file = root.openNextFile();
       }
   }
@@ -676,7 +676,7 @@ void setup() {
   try {
     // CBA Init filesystem
     HEAD("Initializing filesystem...", RNS::LOG_TRACE);
-#if MCU_VARIANT == MCU_NRF52
+#if BOARD_MODEL == BOARD_RAK4631
     // First attempt to initialize RAK15001 flash
     TRACE("Looking for RAK15001 flash...");
     static const SPIFlash_Device_t device_rak15001 = RAK15001;
@@ -697,6 +697,7 @@ void setup() {
     }
 #else
     filesystem.init();
+    TRACE("Initialized filesystem");
 #endif
 
     // Remove legacy files
@@ -734,10 +735,9 @@ void setup() {
     filesystem.format();
 #endif
 #if 1
-    Serial.println("Listing filesystem /:");
+    printf("Listing filesystem /:\n");
     filesystem.listDirectory("/", [&](const char* path) -> void {
-      Serial.print("  ");
-      Serial.println(path);
+      printf("  %s\n", path);
     });
 #endif
 #endif // !NDEBUG && RNS_USE_FS
@@ -748,12 +748,23 @@ void setup() {
 
 #if defined(LORA_TRANSPORT)
       lora_interface = new LoRaInterface();
+      // Provisioning default
+      lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
 #endif
 #if HAS_WIFI && defined(UDP_TRANSPORT)
       if (wifi_mode != WR_WIFI_OFF) {
         udp_interface = new UDPInterface();
+        // Provisioning default
+        udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       }
 #endif
+
+    // Provisioning default
+    reticulum.transport_enabled(true);
+    // Provisioning default
+    reticulum.probe_destination_enabled(true);
+    // Provisioning default
+    reticulum.remote_management_enabled(true);
 
 #ifdef HAS_PROVISIONING
       // Bring the Provisioning subsystem up. Loads persisted MsgPack files
@@ -762,6 +773,7 @@ void setup() {
       // disk value differs from the declared default — so on a fresh device
       // the lora_* globals stay at their Config.h defaults until either
       // eeprom_conf_load() runs or a Provisioning SetState arrives.
+      // CBA NOTE: All app-default-values must be set *before* calling init_provisioning so that they take effect for fresh installs
       HEAD("Initializing Provisioning subsystem...", RNS::LOG_TRACE);
       init_provisioning();
       auto& prov = RNS::Provisioning::Manager::instance();
@@ -778,16 +790,12 @@ void setup() {
 
 #if defined(LORA_TRANSPORT)
       HEAD("Registering LoRA Interface...", RNS::LOG_TRACE);
-        // Provisioning
-      //lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(lora_interface);
       TRACEF("LoRaInterface hash: %s", lora_interface.get_hash().toHex().c_str());
 #endif
 #if HAS_WIFI && defined(UDP_TRANSPORT)
       if (wifi_mode != WR_WIFI_OFF) {
         HEAD("Registering UDP Interface...", RNS::LOG_TRACE);
-        // Provisioning
-        //udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
         RNS::Transport::register_interface(udp_interface);
         TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());
       }
@@ -795,10 +803,8 @@ void setup() {
 
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();
-      // Provisioning
-      //reticulum.transport_enabled(op_mode == MODE_TNC);
-      // Provisioning
-      //reticulum.probe_destination_enabled(true);
+      // CBA NOTE: `transport_enabled` needs to always be overridden to false when op_mode is not MODE_TNC
+      if (op_mode != MODE_TNC) reticulum.transport_enabled(false);
       reticulum.start();
 
       // Set loop callback only after the Reticulum instance is started
@@ -825,7 +831,7 @@ void setup() {
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 
 #ifdef URTN_STATS_PAGES
-      if (prov.field(PROV_NS_GENERAL, PROV_GENERAL_NOMADNET).as_bool()) {
+      if (nomadnet_enabled) {
         // Create an IN/SINGLE destination on the NomadNet aspect, so
         // clients (this example, or a Python NomadNet browser) can find
         // us by aspect/announce and open a Link.

@@ -44,7 +44,7 @@ def post_upload(source, target, env):
         # firmware pacakaging is incomplete due to missing console image
         #firmware_package(env)
     elif ("nordicnrf52" in platform):
-        time.sleep(5)
+        time.sleep(10)
         # device provisioning is incomplete and only currently appropriate for 915MHz RAK4631
         device_provision(env)
         time.sleep(5)
@@ -93,6 +93,8 @@ def device_provision(env):
             env.Execute("rnodeconf --product c3 --model c8 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak4631" | "rak4631_local":
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "techo" | "techo_local":
+            env.Execute("rnodeconf --product 15 --model 17 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_t114" | "heltec_t114_local":
             env.Execute("rnodeconf --product c2 --model c7 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case _:

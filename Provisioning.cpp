@@ -58,6 +58,7 @@ extern uint8_t wifi_mode;
 extern char wr_ssid[];
 #endif
 extern bool kiss_framed_logs;
+extern bool nomadnet_enabled;
 
 // ---------------------------------------------------------------------------
 // External hooks into the rest of the firmware.
@@ -97,21 +98,22 @@ static void register_provisioning_namespaces() {
   // ----- general namespace -----
   auto general = Manager::instance()
     .register_namespace("General", PROV_NS_GENERAL)
-      .field_bool("kiss_framed_logs", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, true,
+      .field_bool("kiss_framed_logs", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, kiss_framed_logs,
         [](const Value& v) { kiss_framed_logs = v.as_bool(); return true; },
         []() { return kiss_framed_logs; });
 
 #ifdef URTN_STATS_PAGES
     general
-      .field_bool("enable_nomadnet", PROV_GENERAL_NOMADNET, FF_REBOOT_REQUIRED, true);
+      .field_bool("nomadnet_enabled", PROV_GENERAL_NOMADNET, FF_REBOOT_REQUIRED, nomadnet_enabled,
+        [](const Value& v) { nomadnet_enabled = v.as_bool(); return true; },
+        []() { return nomadnet_enabled; });
 #endif
 
 #if defined(LORA_TRANSPORT)
   if (lora_interface) {
     general
       .field_enum(
-          "lora_interface_mode", PROV_GENERAL_LORA_MODE, FF_LIVE_APPLY,
-          (fint_t)RNS::Type::Interface::MODE_GATEWAY,
+          "lora_interface_mode", PROV_GENERAL_LORA_MODE, FF_LIVE_APPLY, static_cast<fint_t>(lora_interface.mode()),
           /* values   */ {
             RNS::Type::Interface::MODE_GATEWAY,
             RNS::Type::Interface::MODE_FULL,
@@ -141,8 +143,7 @@ static void register_provisioning_namespaces() {
   if (udp_interface) {
     general
       .field_enum(
-          "udp_interface_mode", PROV_GENERAL_UDP_MODE, FF_LIVE_APPLY,
-          (fint_t)RNS::Type::Interface::MODE_GATEWAY,
+          "udp_interface_mode", PROV_GENERAL_UDP_MODE, FF_LIVE_APPLY, static_cast<fint_t>(udp_interface.mode()),
           /* values   */ {
             RNS::Type::Interface::MODE_GATEWAY,
             RNS::Type::Interface::MODE_FULL,
