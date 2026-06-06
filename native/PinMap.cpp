@@ -56,7 +56,7 @@ void apply() {
 }
 
 // Bind Portduino's logical pin numbers to real libgpiod-backed lines.
-// Identity-mapping: the value of `pin_*` in microreticulum.conf is treated
+// Identity-mapping: the value of `pin_*` in rnoded.conf is treated
 // as both the Portduino logical pin number AND the gpiochip line offset
 // (BCM number on a Raspberry Pi). No-op on macOS / cross_platform — the
 // `#ifdef PORTDUINO_LINUX_HARDWARE` body is empty there.

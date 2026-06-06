@@ -65,7 +65,7 @@ extern uint8_t op_mode;
 void portduinoSetup() {
     // 1) Load config from the default path (or a path supplied via env var).
     const char* cfg_env = std::getenv("MR_CONFIG");
-    std::string cfg_path = cfg_env ? cfg_env : "microreticulum.conf";
+    std::string cfg_path = cfg_env ? cfg_env : "rnoded.conf";
     native_config::load(cfg_path);
 
     // 2) Optional --data-dir style override via env var.

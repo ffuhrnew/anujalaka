@@ -1,6 +1,6 @@
 // Native-build LoRa driver factory. Runtime-selects one of the three
 // concrete modem drivers (sx126x / sx127x / sx128x) based on the modem id
-// loaded from microreticulum.conf, calls its driver-native setPins() with
+// loaded from rnoded.conf, calls its driver-native setPins() with
 // the correct arity using the global pin_* values already populated by
 // native_pinmap::apply(), and returns the polymorphic ILoRaRadio* the
 // firmware then drives via virtual dispatch.

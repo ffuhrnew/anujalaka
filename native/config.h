@@ -1,7 +1,7 @@
 // Copyright (C) 2026, microReticulum_Firmware contributors
 //
 // Native-build runtime configuration. Loaded once at startup from a key=value
-// text file (default: ./microreticulum.conf). All values have sensible
+// text file (default: ./rnoded.conf). All values have sensible
 // defaults so the daemon is runnable with an empty config file for testing.
 
 #ifndef NATIVE_CONFIG_H

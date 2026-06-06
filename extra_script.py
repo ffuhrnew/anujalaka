@@ -1,6 +1,35 @@
 import time
 import hashlib
 import shutil
+import platform as platformlib
+
+#
+# Helpier functions
+#
+
+def get_target():
+
+    # Detect the operating system
+    platform_system = platformlib.system().lower()
+    if "linux" in platform_system:
+        os_name = "linux"
+    elif "darwin" in platform_system:
+        os_name = "darwin"
+    else:
+        os_name = "unknown"
+
+    # Detect the architecture
+    platform_machine = platformlib.machine().lower()
+    if platform_machine == "x86_64":
+        arch_name = "amd64"
+    elif "aarch" in platform_machine or "arm64" in platform_machine:
+        arch_name = "arm64"
+    elif "arm" in platform_machine:
+        arch_name = "armh"
+    else:
+        arch_name = "unknown"
+
+    return os_name + "-" + arch_name
 
 #
 # Custom targets
@@ -175,6 +204,16 @@ def firmware_package(env):
         env.Execute(zip_cmd)
     elif (platform == "nordicnrf52"):
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".zip " + project_dir + "/Release/.")
+    else:
+        env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + " " + build_dir + "/rnoded")
+        env.Execute("rm -f " + project_dir + "/Release/rnoded-" + get_target() + ".zip")
+        zip_cmd = "zip --junk-paths "
+        zip_cmd += project_dir + "/Release/rnoded-" + get_target() + ".zip "
+        zip_cmd += build_dir + "/rnoded "
+        zip_cmd += project_dir + "/rnoded.example.conf "
+        zip_cmd += project_dir + "/rnoded.example.service "
+        env.Execute(zip_cmd)
+        get_target()
     env.Execute("python " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")
 
 #
@@ -221,6 +260,16 @@ elif (platform == "nordicnrf52"):
         ],
         title="Package",
         description="Package nrf52 firmware for delivery"
+    )
+else:
+    env.AddCustomTarget(
+        name="package",
+        dependencies="$BUILD_DIR/${PROGNAME}",
+        actions=[
+            target_package
+        ],
+        title="Package",
+        description="Package native daemon for delivery"
     )
 
 # Register actions
