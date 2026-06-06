@@ -25,7 +25,7 @@ def get_target():
     elif "aarch" in platform_machine or "arm64" in platform_machine:
         arch_name = "arm64"
     elif "arm" in platform_machine:
-        arch_name = "armh"
+        arch_name = "armhf"
     else:
         arch_name = "unknown"
 
