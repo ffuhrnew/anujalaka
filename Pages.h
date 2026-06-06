@@ -123,7 +123,9 @@ RNS::Bytes serve_page(
       content << "`!`[• Transport Metrics`:/page/stack.mu`c=metrics]`\n";
       content << ">> Device\n";
       content << "`!`[• General`:/page/device.mu`c=general]`\n";
-      content << "`!`[• Interfaces`:/page/device.mu`c=interfaces]`\n";
+      content << "`!`[• Interface`:/page/device.mu`c=interfaces]`\n";
+      if (remote_identity) content << "\n🛡️ Verified identity: " << remote_identity.hash().toHex() << "\n";
+      else content << "\n⚠️ Unknown identity. Identity must be provided for access to this site.\n";
     }
     else if (path == "/page/stack.mu") {
   	  if (category == "heap") {
