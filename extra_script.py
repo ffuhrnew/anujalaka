@@ -23,14 +23,10 @@ def get_target():
     try:
         platform_os_info = platformlib.freedesktop_os_release()
         print("OS Release:", platform_os_info)
-        if "debian" in platform_os_info.get('NAME') or "Debian" in platform_os_info.get('NAME'):
-            distro_name = "debian"
-        elif "ubuntu" in platform_os_info.get('NAME') or "Ubuntu" in platform_os_info.get('NAME'):
-            distro_name = "debian"
-        else:
-            distro_name = "unknown"
         if platform_os_info.get('VERSION_CODENAME'):
-            distro_name += "-" + platform_os_info.get('VERSION_CODENAME')
+            distro_name = platform_os_info.get('ID') + "-" + platform_os_info.get('VERSION_CODENAME')
+        else:
+            distro_name = platform_os_info.get('ID')
         os_name += "-" + distro_name
     except Exception:
         pass
