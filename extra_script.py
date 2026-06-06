@@ -31,7 +31,7 @@ def get_target():
             distro_name = "unknown"
         if platform_os_info.get('VERSION_CODENAME'):
             distro_name += "-" + platform_os_info.get('VERSION_CODENAME')
-        os_name += "_" + distro_name
+        os_name += "-" + distro_name
     except Exception:
         pass
 
