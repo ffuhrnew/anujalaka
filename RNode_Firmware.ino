@@ -71,7 +71,11 @@ volatile bool serial_buffering = false;
   bool bt_init_ran = false;
 #endif
 
+#if PLATFORM == PLATFORM_NATIVE
+bool kiss_framed_logs = false;
+#else
 bool kiss_framed_logs = true;
+#endif
 bool nomadnet_enabled = true;
 
 #if HAS_CONSOLE
