@@ -340,7 +340,7 @@ void setup() {
 	//printf("Total flash: %zu bytes\n", RNS::Utilities::OS::storage_size());
 
   device_uid_init();
-  printf("Device UID:  %s\n", device_uid_str);
+  INFOF("Device UID:  %s", device_uid_str);
 
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32
@@ -874,7 +874,7 @@ void setup() {
           char stats_announce_data[64];
           snprintf(stats_announce_data, sizeof(stats_announce_data),
                   "microReticulum Node [%s]", device_uid_str);
-          TRACEF("Announcing NomadNet pages \"%s\" at destination %s", stats_announce_data, stats_destination.hash().toHex().c_str());
+          NOTICEF("Announcing NomadNet site \"%s\" at destination <%s>", stats_announce_data, stats_destination.hash().toHex().c_str());
           stats_destination.announce(stats_announce_data);
         }
       }
@@ -894,7 +894,6 @@ void setup() {
         HEAD("RNS transport mode is DISABLED", RNS::LOG_INFO);
         HEAD("Configure TNC mode with radio configuration to enable RNS transport", RNS::LOG_INFO);
       }
-      //RNS::loglevel(RNS::LOG_NONE);
     }
     else {
       HEAD("RNS is inoperable because hardware is not ready!", RNS::LOG_ERROR);

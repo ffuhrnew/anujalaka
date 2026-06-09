@@ -107,7 +107,8 @@ RNS::Bytes serve_page(
 		}
 	}
 
-	NOTICEF("Serving %s with category \"%s\" to link <%s>", path.toString().c_str(), category.c_str(), link_id.toHex().c_str());
+	if (remote_identity) VERBOSEF("Serving page %s with category \"%s\" to link <%s> with identity <%s>", path.toString().c_str(), category.c_str(), link_id.toHex().c_str(), remote_identity.hash().toHex().c_str());
+	else VERBOSEF("Serving page %s with category \"%s\" to link <%s>", path.toString().c_str(), category.c_str(), link_id.toHex().c_str());
 	MsgPack::Packer packer;
   {
     RNS::Bytes content;
