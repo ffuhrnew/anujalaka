@@ -25,7 +25,11 @@
 #define CMD_LOG           0x80
 #define CMD_PROVISION_RSP 0x87
 
+#include <microReticulum/Transport.h>
+#include <microReticulum/Reticulum.h>
 #include <microReticulum/Interface.h>
+#include <microReticulum/Identity.h>
+#include <microReticulum/Destination.h>
 #include <microReticulum/Provisioning/Provisioning.h>
 
 #include <string>
@@ -59,6 +63,8 @@ extern char wr_ssid[];
 #endif
 extern bool kiss_framed_logs;
 extern bool nomadnet_enabled;
+extern RNS::Destination nomadnet_destination;
+extern char nomadnet_name[64];
 
 // ---------------------------------------------------------------------------
 // External hooks into the rest of the firmware.
@@ -104,9 +110,12 @@ static void register_provisioning_namespaces() {
 
 #ifdef URTN_STATS_PAGES
     general
-      .field_bool("nomadnet_enabled", PROV_GENERAL_NOMADNET, FF_REBOOT_REQUIRED, nomadnet_enabled,
+      .field_bool("nomadnet_enabled", PROV_GENERAL_NOMADNET_ENABLE, FF_REBOOT_REQUIRED, nomadnet_enabled,
         [](const Value& v) { nomadnet_enabled = v.as_bool(); return true; },
-        []() { return nomadnet_enabled; });
+        []() { return nomadnet_enabled; })
+      .field_string("nomadnet_name", PROV_GENERAL_NOMADNET_NAME, FF_REBOOT_REQUIRED, nomadnet_name, 63,
+        [](const Value& v) { strncpy(nomadnet_name, v.as_string().c_str(), sizeof(nomadnet_name)); return true; },
+        []() { return nomadnet_name; });
 #endif
 
 #if defined(LORA_TRANSPORT)
@@ -179,10 +188,16 @@ static void register_provisioning_namespaces() {
   // interface object reports it has a live implementation (operator bool
   // on RNS::Interface). Compile-time guards remain only where they need
   // to — UDP's externs aren't declared without UDP_TRANSPORT.
-  auto metrics_ifaces = Manager::instance()
-      .namespace_("Metrics", PROV_NS_METRICS)
-        .namespace_("Interfaces", PROV_NS_METRICS_IFACE);
+  auto metrics = Manager::instance().namespace_("Metrics", PROV_NS_METRICS);
 
+  metrics.namespace_("Destinations", PROV_NS_METRICS_DSTS)
+    .metric_bytes("transport_identity", PROV_METRICS_TRANS_ID, []() { return RNS::Transport::identity() ? RNS::Transport::identity().hash() : RNS::Bytes{}; })
+    .metric_bytes("probe_destination", PROV_METRICS_PROBE_DST, []() { return RNS::Transport::probe_destination() ? RNS::Transport::probe_destination().hash() : RNS::Bytes{}; })
+    .metric_bytes("mgmt_destination", PROV_METRICS_MGMT_DST, []() { return RNS::Transport::remote_management_destination() ? RNS::Transport::remote_management_destination().hash() : RNS::Bytes{}; })
+    .metric_bytes("nomadnet_destination", PROV_METRICS_NOMAD_DST, []() { return nomadnet_destination ? nomadnet_destination.hash() : RNS::Bytes{}; })
+    .end();
+
+  auto metrics_ifaces = metrics.namespace_("Interfaces", PROV_NS_METRICS_IFACE);
 #if defined(LORA_TRANSPORT)
   if (lora_interface) {
     metrics_ifaces
@@ -201,7 +216,6 @@ static void register_provisioning_namespaces() {
         .end();
   }
 #endif
-
 #if defined(UDP_TRANSPORT)
   if (udp_interface) {
     metrics_ifaces
@@ -213,10 +227,9 @@ static void register_provisioning_namespaces() {
         .end();
   }
 #endif
+  metrics_ifaces.end(); // close "Interfaces"
 
-  metrics_ifaces
-      .end()  // close "Interfaces"
-    .end();   // close "Metrics"
+  metrics.end();        // close "Metrics"
 
   // ----- radio namespace (DISABLED) -----
   //

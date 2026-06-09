@@ -36,6 +36,7 @@ extern uint16_t udp_port;
 extern uint8_t wifi_mode;
 extern char wr_ssid[];
 #endif
+extern RNS::Destination nomadnet_destination;
 
 void add_interface_details(RNS::Bytes& content, const RNS::Interface& interface) {
   content << "    \"mode\": \"";
@@ -250,6 +251,10 @@ RNS::Bytes serve_page(
             break;
         }
         content << "\",\n";
+        content << "  \"transport_identity\": \"" << (RNS::Transport::identity() ? RNS::Transport::identity().hash().toHex() : RNS::Bytes{}.toHex()) << "\",\n";
+        content << "  \"probe_destination\": \"" << (RNS::Transport::probe_destination() ? RNS::Transport::probe_destination().hash().toHex() : RNS::Bytes{}.toHex()) << "\",\n";
+        content << "  \"mgmt_destination\": \"" << (RNS::Transport::remote_management_destination() ? RNS::Transport::remote_management_destination().hash().toHex() : RNS::Bytes{}.toHex()) << "\",\n";
+        content << "  \"nomadnet_destination\": \"" << (nomadnet_destination ? nomadnet_destination.hash().toHex() : RNS::Bytes{}.toHex()) << "\",\n";
       	content << "}";
       }
   	  else if (category == "interfaces") {

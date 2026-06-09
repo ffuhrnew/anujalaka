@@ -77,6 +77,8 @@ bool kiss_framed_logs = false;
 bool kiss_framed_logs = true;
 #endif
 bool nomadnet_enabled = true;
+RNS::Destination nomadnet_destination = {RNS::Type::NONE};
+char nomadnet_name[64];
 
 #if HAS_CONSOLE
   #include "Console.h"
@@ -770,6 +772,11 @@ void setup() {
     // Provisioning default
     reticulum.remote_management_enabled(true);
 
+#ifdef URTN_STATS_PAGES
+    // Provisioning default
+    snprintf(nomadnet_name, sizeof(nomadnet_name), "microReticulum Node [%s]", device_uid_str);
+#endif
+
 #ifdef HAS_PROVISIONING
       // Bring the Provisioning subsystem up. Loads persisted MsgPack files
       // (including the radio + general namespaces registered here) and fires
@@ -839,43 +846,31 @@ void setup() {
         // Create an IN/SINGLE destination on the NomadNet aspect, so
         // clients (this example, or a Python NomadNet browser) can find
         // us by aspect/announce and open a Link.
-        RNS::Destination stats_destination = RNS::Destination(
+        nomadnet_destination = RNS::Destination(
           RNS::Transport::identity(),
           RNS::Type::Destination::IN,
           RNS::Type::Destination::SINGLE,
           "nomadnetwork",
           "node"
         );
-/*
-        RNS::Destination stats_destination = RNS::Destination(
-          RNS::Transport::identity(),
-          RNS::Type::Destination::IN,
-          RNS::Type::Destination::SINGLE,
-          "rnstransport",
-          "remote.management"
-        );
-*/
 
         // Register the page handler. ALLOW_ALL because page browsing is open
         // to anyone who can reach the node, just like a Python NomadNet
         // node's default policy.
-        //stats_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
-        stats_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
-        stats_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
-        //stats_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
-        stats_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
-        //stats_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        //nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        //nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        //nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
 
         // Announce once at startup so a client that's already listening can
         // discover us immediately. The node name is sent as the announce
         // app_data (plain UTF-8 bytes), matching nomadnet/Node.py:217-222 —
         // this is what other NomadNet clients show in their site listing.
         {
-          char stats_announce_data[64];
-          snprintf(stats_announce_data, sizeof(stats_announce_data),
-                  "microReticulum Node [%s]", device_uid_str);
-          NOTICEF("Announcing NomadNet site \"%s\" at destination <%s>", stats_announce_data, stats_destination.hash().toHex().c_str());
-          stats_destination.announce(stats_announce_data);
+          NOTICEF("Announcing NomadNet site \"%s\" at destination <%s>", nomadnet_name, nomadnet_destination.hash().toHex().c_str());
+          nomadnet_destination.announce(nomadnet_name);
         }
       }
 #endif // URTN_STATS_PAGES
