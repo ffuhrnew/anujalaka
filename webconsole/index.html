@@ -73,6 +73,8 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .badge.secret { background: rgba(180,131,9,0.15); color: var(--warn); }
 .badge.reboot { background: rgba(37,99,235,0.15); color: var(--accent); }
 .badge.draft { background: rgba(37,99,235,0.15); color: var(--accent); }
+.badge.set-only { background: rgba(107,114,128,0.18); color: var(--muted); border: 1px dashed var(--border); padding: 0 5px; }
+.set-only-banner { margin: 8px 0 12px; padding: 8px 12px; background: rgba(107,114,128,0.10); border-left: 3px solid var(--muted); color: var(--ink); font-size: 12px; line-height: 1.45; border-radius: 3px; }
 /* Read-only info fields — render the value as static text, not an input. */
 .field.ro-info .ro-value { font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink); padding: 5px 10px; background: rgba(107,114,128,0.08); border-radius: 4px; max-width: 360px; word-break: break-all; white-space: pre-wrap; min-height: 16px; }
 .field.ro-info .ro-value.empty { color: var(--muted); font-style: italic; }
@@ -144,6 +146,19 @@ pre { font: 12px/1.5 ui-monospace, Menlo, monospace; }
 .bt-mode-row button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .bt-mode-row button:disabled { opacity: 0.5; cursor: not-allowed; }
 .mode-current { padding: 10px 14px; background: rgba(37,99,235,0.08); border: 1px solid var(--accent); border-radius: 4px; margin-bottom: 16px; }
+/* While auto-reconnecting after Reboot now / transport drop: visually disable
+   panel-body controls. nsState / nodeCfgState are preserved across the window
+   (see startReconnect) so values stay visible, but edits would be lost when
+   the post-reconnect fetch overwrites them. */
+body.is-reconnecting input,
+body.is-reconnecting select,
+body.is-reconnecting textarea,
+body.is-reconnecting button.wo-send,
+body.is-reconnecting .ns-toolbar button,
+body.is-reconnecting .sidenav-detail button {
+  pointer-events: none;
+  opacity: 0.55;
+}
 </style>
 </head>
 <body>
@@ -308,8 +323,16 @@ const NODE_CONFIG_SCHEMA = {
         cmd: CMD_CR, minI: 5, maxI: 8, default: 5 },
       { id: 'txp', name: 'txp', label: 'TX power', type: FT.Int, encoding: 'i8',
         cmd: CMD_TXPOWER, minI: -9, maxI: 22, unit: 'dBm', default: 0 },
+      // CMD_DIS_IA: firmware byte 0x00 = IA enabled, 0x01 = IA disabled.
+      // Exposed as a positive "Interference avoidance" toggle and inverted at
+      // the wire. Set-only on the wire (no read counterpart), so the badge in
+      // the row makes that clear — the rest of the Radio fields stay readable.
+      { id: 'ia', name: 'ia', label: 'Interference avoidance', type: FT.Bool,
+        cmd: CMD_DIS_IA, encoding: 'u8',
+        toWire: (v) => v ? 0x00 : 0x01, fromWire: (b) => b === 0x00,
+        default: false, readable: false },
     ],
-    saveOrder: ['frequency','bandwidth','sf','cr','txp'],
+    saveOrder: ['frequency','bandwidth','sf','cr','txp','ia'],
   },
   bluetooth: {
     label: 'Bluetooth',
@@ -336,81 +359,10 @@ const NODE_CONFIG_SCHEMA = {
     ],
     saveOrder: ['mode','channel','ssid','psk','ip','nm'],
     saveTrailerNote: 'Settings are written to the WiFi config sector and take effect on the next reboot.',
-    // ──────────────────────────────────────────────────────────────────
-    //  ⚠ FRAGILE: WiFi values are recovered by dumping raw EEPROM and
-    //  decoding at hardcoded offsets. The CMD_WIFI_* opcodes are
-    //  write-only in the firmware — there's no read counterpart — so the
-    //  only way to "Refresh" or display persisted values after a reboot
-    //  is to read EEPROM directly and trust the layout.
-    //
-    //  Dependencies (any of these breaking silently corrupts the display):
-    //    • ROM.h:55-60       — ADDR_CONF_SSID=0x00 / PSK=0x21 / IP=0x42 /
-    //                          NM=0x46 inside the 256-byte CONFIG sector
-    //    • ROM.h:47-48       — ADDR_CONF_WIFI=0xBA (mode) /
-    //                          ADDR_CONF_WCHN=0xBB (channel) in main EEPROM
-    //    • Boards.h          — CONFIG_OFFSET=0, EEPROM_OFFSET=EEPROM_SIZE
-    //                          -EEPROM_RESERVED. Different layouts on
-    //                          non-ESP32 platforms aren't handled here.
-    //    • CMD_CFG_READ      — the firmware gates this on
-    //                          `#if MCU_VARIANT == MCU_ESP32` (no NRF52 /
-    //                          AVR support). NRF52 falls back to a partial
-    //                          read with only mode/channel from main EEPROM.
-    //    • 0xFF sentinel     — uninitialised EEPROM bytes are 0xFF. The
-    //                          decoder treats a 0xFF run as "no value".
-    //
-    //  Better long-term fix: extend the firmware with read-side CMD_WIFI_*
-    //  opcodes (or a single CMD_WIFI_GET that returns the parsed struct).
-    //  Once available, drop this readFn and add `readable: true` to each
-    //  field so the generic legacy.readSection path handles them.
-    // ──────────────────────────────────────────────────────────────────
-    // Cached copies in state.nodeCfgEeprom / state.nodeCfgCfgSector are
-    // refreshed here so the EEPROM viewer also sees the latest bytes.
-    readFn: async (lc) => {
-      const out = {};
-      // Helper: decode a C-string in `buf` starting at offset, max `len` bytes.
-      // Stops at the first 0x00 or 0xFF (uninitialised EEPROM defaults to 0xFF).
-      const decodeCstr = (buf, start, max) => {
-        if (!buf) return '';
-        const end = Math.min(start + max, buf.length);
-        let n = start;
-        while (n < end && buf[n] !== 0x00 && buf[n] !== 0xFF) n++;
-        try { return new TextDecoder('utf-8', { fatal: false }).decode(buf.slice(start, n)); }
-        catch (_) { return ''; }
-      };
-      // ip4: 4 octets. 0xFF.0xFF.0xFF.0xFF means uninitialised → treat as DHCP.
-      const decodeIp = (buf, start) => {
-        if (!buf || buf.length < start + 4) return '0.0.0.0';
-        if (buf[start]===0xFF && buf[start+1]===0xFF && buf[start+2]===0xFF && buf[start+3]===0xFF) return '0.0.0.0';
-        return `${buf[start]}.${buf[start+1]}.${buf[start+2]}.${buf[start+3]}`;
-      };
-      try {
-        const cfg = await lc.readCfgSector();
-        state.nodeCfgCfgSector.set(cfg);
-        out.ssid = decodeCstr(cfg, 0x00, 32);
-        out.psk  = decodeCstr(cfg, 0x21, 32);
-        out.ip   = decodeIp(cfg, 0x42);
-        out.nm   = decodeIp(cfg, 0x46);
-      } catch (e) {
-        // CMD_CFG_READ not supported on this board (NRF52 path) — fall through
-        // with only the values we can read from main EEPROM.
-        console.warn('WiFi readFn: cfg sector read failed:', e.message || e);
-      }
-      try {
-        const ee = await lc.readEeprom();
-        state.nodeCfgEeprom.set(ee);
-        if (ee && ee.length > 0xBB) {
-          const m = ee[0xBA];
-          const c = ee[0xBB];
-          // Only surface values that look initialised. 0xFF on a fresh
-          // EEPROM means "no value" — leave it to the field default.
-          if (m === 0x00 || m === 0x01 || m === 0x02) out.mode = m;
-          if (c >= 1 && c <= 13) out.channel = c;
-        }
-      } catch (e) {
-        console.warn('WiFi readFn: EEPROM read failed:', e.message || e);
-      }
-      return out;
-    },
+    // CMD_WIFI_* opcodes are write-only in the firmware — there's no read
+    // counterpart and we won't decode raw EEPROM at hardcoded offsets. Fields
+    // surface as "set-only" in the UI (per-field badge + section banner);
+    // edits write to the device but values can't be read back.
   },
   display: {
     label: 'Display',
@@ -427,14 +379,8 @@ const NODE_CONFIG_SCHEMA = {
         cmd: CMD_DISP_ADDR, minI: 0, maxI: 255, default: 0x3C, readable: false },
       { id: 'np', name: 'np', label: 'NeoPixel intensity', type: FT.Int, encoding: 'u8',
         cmd: CMD_NP_INT, minI: 0, maxI: 255, default: 0, readable: false },
-      // CMD_DIS_IA: firmware byte 0x00 = IA enabled, 0x01 = IA disabled.
-      // We expose it as a positive "Interference avoidance" toggle and invert at the wire.
-      { id: 'ia', name: 'ia', label: 'Interference avoidance', type: FT.Bool,
-        cmd: CMD_DIS_IA, encoding: 'u8',
-        toWire: (v) => v ? 0x00 : 0x01, fromWire: (b) => b === 0x00,
-        default: true, readable: false },
     ],
-    saveOrder: ['intensity','blanking','rotation','addr','np','ia'],
+    saveOrder: ['intensity','blanking','rotation','addr','np'],
   },
   eeprom: {
     label: 'EEPROM',
@@ -1475,6 +1421,15 @@ state.info.subscribe((info) => {
   _lastNeedsReboot = nowNeeds;
 });
 
+// Toggle a body class while the auto-reconnect loop is active so CSS can dim
+// and disable panel-body controls. The tab-strip already disables tab buttons
+// during reconnect; this extends the same affordance to the panel itself so
+// the user can't start typing into a field that's about to be overwritten by
+// the post-reconnect fetch.
+state.reconnecting.subscribe((r) => {
+  document.body.classList.toggle('is-reconnecting', !!r);
+});
+
 function wireClient(c){
   c.onLog = (text) => {
     const lines = text.split(/\r?\n/).filter(l => l.length > 0);
@@ -1567,16 +1522,14 @@ async function startReconnect(){
   if (!transport && lastTransportName !== 'ws') return;  // nothing to reconnect to
   const myToken = ++reconnectToken;
   state.reconnecting.set(true);
-  // Stale post-reboot schema/state would render with old committed values; clear
-  // it so the UI doesn't briefly show outdated data after we reconnect.
+  // Preserve nsState / nodeCfgState across the reconnect window so visible
+  // field values don't flash to field.default while the device is rebooting.
+  // Only invalidate the *Loaded flags — that triggers re-fetch once the device
+  // is back, which then overwrites these maps with fresh data. (Firmware drafts
+  // don't survive reboot, so we still reset the local draft-presence flags.)
   state.nsLoaded.set({});
-  state.nsState.set({});
   state.nsServerErrors.set({});
-  // Firmware draft cleared by reboot (the new boot starts fresh).
   state.firmwareHasDraft.set(false);
-  // Node Config side: drop cached reads (device may have rebooted), keep the
-  // selected sub-tab so the user lands back where they were.
-  state.nodeCfgState.set({});
   state.nodeCfgLoaded.set({});
   state.nodeCfgHasDraft.set(false);
   state.nodeCfgEeprom.set(null);
@@ -2649,6 +2602,10 @@ function buildFieldRow(nsId, f, ctx){
   // to buildFieldRowWriteOnly), so we never need to disable inputs here.
   const secret = !!(f.flags & FF.SECRET);
   const reboot = !!(f.flags & FF.REBOOT_REQUIRED);
+  // Legacy Node Config fields with no KISS read counterpart. The displayed
+  // value is a schema placeholder, not a readback — surface this with a badge
+  // so the user doesn't mistake the placeholder for the device's current state.
+  const setOnly = (f.readable === false);
 
   // Build input ONCE; we never recreate it on subsequent state changes. Use
   // the regular-draft variant (bigBytesList=true) so BytesList textareas get
@@ -2697,6 +2654,10 @@ function buildFieldRow(nsId, f, ctx){
     if (ro) badges.appendChild(el('span', { class: 'badge ro' }, 'read-only'));
     if (secret) badges.appendChild(el('span', { class: 'badge secret' }, 'secret'));
     if (reboot) badges.appendChild(el('span', { class: 'badge reboot' }, '↻ reboot'));
+    if (setOnly) badges.appendChild(el('span', {
+      class: 'badge set-only',
+      title: 'Write-only on this device. The value shown is a schema placeholder; editing and Save writes the value to the device, but the firmware does not expose a read opcode for this field.'
+    }, 'set-only'));
     if (isDraft) badges.appendChild(el('span', { class: 'badge draft' }, '• draft'));
     // Errors — only surface validation errors for fields the user actually edited.
     // Untouched fields may carry firmware "sentinel" defaults (e.g. radio.frequency=0)
@@ -3004,6 +2965,13 @@ function buildNcfgSchemaPanel(sectionId){
   const wrap = el('div', { class: 'ncfg-section' });
   wrap.appendChild(el('h2', null, sec.label));
 
+  // A section is fully "set-only" when every field is declared readable:false
+  // and there's no readFn to surface a value some other way. Refresh is
+  // meaningless in that case, and the displayed values are placeholders.
+  const setOnlySection = Array.isArray(sec.fields) && sec.fields.length > 0
+    && typeof sec.readFn !== 'function'
+    && sec.fields.every(f => f.readable === false);
+
   const toolbar = el('div', { class: 'ns-toolbar' });
   const saveBtn = el('button', null, 'Save ' + sec.label);
   const revertBtn = el('button', null, 'Revert');
@@ -3015,9 +2983,18 @@ function buildNcfgSchemaPanel(sectionId){
     ncfgFetchSection(sectionId);
   };
   toolbar.appendChild(saveBtn);
-  toolbar.appendChild(revertBtn);
-  toolbar.appendChild(refreshBtn);
+  // Revert and Refresh are meaningless for fully set-only sections (nothing
+  // on the device to revert against or refresh from), so hide them entirely.
+  if (!setOnlySection) {
+    toolbar.appendChild(revertBtn);
+    toolbar.appendChild(refreshBtn);
+  }
   wrap.appendChild(toolbar);
+
+  if (setOnlySection) {
+    wrap.appendChild(el('div', { class: 'set-only-banner' },
+      'This section is write-only. The device firmware does not expose these fields for readback over KISS, so the values shown below are schema placeholders, not the current device state. Edits take effect when you click Save.'));
+  }
 
   if (sec.saveTrailerNote) {
     wrap.appendChild(el('div', { class: 'ncfg-trailer' }, sec.saveTrailerNote));
@@ -3238,11 +3215,13 @@ function buildNcfgRadioPanel(){
             s['radio'] = { committed: { ...obj.committed, ...obj.draft }, draft: {} };
           });
           recomputeHasDraft(NCFG_CTX);
-        } else {
-          // No drafts but mode is changing → still ensure radio online + persist
-          // current lora_* via CMD_CONF_SAVE.
-          await legacy.setMode(true);
         }
+        // Bring the radio online and CMD_CONF_SAVE the current lora_* values
+        // to EEPROM. writeSection() above only updates RAM via per-field
+        // opcodes; without this, edited values revert on the next reboot.
+        // Also sets ADDR_CONF_OK so the device boots into TNC mode. Safe to
+        // call even when there were no drafts — covers the mode-change-only case too.
+        await legacy.setMode(true);
         state.nodeCfgNeedsReboot.set(true);
         showToast('Radio config persisted (device will boot in TNC mode)', 'warn');
       } else {
