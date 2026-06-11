@@ -1,0 +1,8 @@
+#!/bin/sh
+cd microReticulum_Firmware
+git pull
+#pio run -e native -t clean
+pio run -e native -t fullclean
+pio run -e native -t package
+cp -p ./Release/*.zip ../.
+cd ..

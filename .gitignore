@@ -10,8 +10,8 @@ build/*
 .pio/*
 .vscode/*
 Debug*
-# Native build runtime config (user-local; copy from microreticulum.example.conf)
-microreticulum.conf
-# EEPROM image written by native-build EEPROMShim (user-local, regenerated on boot)
+rnoded.conf
 eeprom
 state/*
+docker/workspace/*
+!docker/workspace/build
