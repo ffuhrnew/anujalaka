@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 //
 // Definitions for the runtime-configurable pin globals declared as
 // `extern int pin_*` in Boards.h under MCU_VARIANT == MCU_NATIVE.

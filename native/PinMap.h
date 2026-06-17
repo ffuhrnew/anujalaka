@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 //
 // Public declarations for native_pinmap. The implementation lives in
 // PinMap.cpp; the matching pin_* extern globals are declared in Boards.h

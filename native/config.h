@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 //
 // Native-build runtime configuration. Loaded once at startup from a key=value
 // text file (default: ./rnoded.conf). All values have sensible

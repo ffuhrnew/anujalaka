@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 //
 // Portduino owns `main()` (see cores/portduino/main.cpp in the framework).
 // It defines `portduinoSetup()` as a weak symbol; overriding it here lets
@@ -24,6 +24,7 @@
 
 #include <Arduino.h>  // brings in `extern HardwareSPI SPI;` declaration
 
+#include <argp.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -72,6 +73,69 @@ extern uint8_t current_modem;
 extern uint8_t op_mode;
 #define FIRMWARE_MODE_TNC 0x12   // mirrors MODE_TNC in Config.h
 
+// Command-line --config / -c argument storage. Populated by argp before
+// portduinoSetup() runs; consumed there when choosing the config path.
+// Precedence: --config flag > $MR_CONFIG env > default "rnoded.conf".
+namespace {
+    struct NativeArgs {
+        const char* config_path = nullptr;
+    };
+    NativeArgs g_native_args;
+
+    struct argp_option native_options[] = {
+        {"config", 'c', "PATH", 0, "Path to rnoded.conf (overrides $MR_CONFIG)", 0},
+        {nullptr, 0, nullptr, 0, nullptr, 0}
+    };
+
+    error_t native_parse_opt(int key, char* arg, struct argp_state* state) {
+        auto* args = static_cast<NativeArgs*>(state->input);
+        switch (key) {
+        case 'c':
+            args->config_path = arg;
+            return 0;
+        case ARGP_KEY_ARG:
+            return 0;
+        default:
+            return ARGP_ERR_UNKNOWN;
+        }
+    }
+
+    struct argp native_argp = {
+        native_options, native_parse_opt, nullptr, nullptr, nullptr, nullptr, nullptr
+    };
+}
+
+// Portduino calls this before argp_parse, so it's the right place to
+// register our child argp via portduinoAddArguments(). Overrides the
+// weak default in framework-portduino/cores/portduino/main.cpp.
+void portduinoCustomInit() {
+    static struct argp_child child = {
+        &native_argp, 0, "microReticulum daemon options", 1
+    };
+    portduinoAddArguments(child, &g_native_args);
+}
+
+void pulse_nreset(uint32_t low_ms, uint32_t high_settle_ms) {
+    if (pin_reset < 0) return;
+    pinMode(pin_reset, OUTPUT);
+    digitalWrite(pin_reset, LOW);
+    delay(low_ms);
+    digitalWrite(pin_reset, HIGH);
+    delay(high_settle_ms);
+}
+
+void clean_reset_at_boot() {
+    if (pin_reset < 0) {
+        // No reset pin configured (e.g. cross_platform / macOS sim, or a
+        // board that ties NRESET directly to host MCU reset). Boot-time
+        // reset is silently skipped — the modem driver's own reset() in
+        // begin() still runs.
+        return;
+    }
+    std::fprintf(stderr, "[radio] clean reset at boot (NRESET low 50ms, settle 20ms)\n");
+    pulse_nreset(50, 20);
+}
+
 // Portduino calls this before invoking the Arduino sketch's setup().
 // The symbol replaces Portduino's weak default (which has C++ linkage,
 // no extern "C") — match its signature exactly so the linker picks ours.
@@ -89,9 +153,17 @@ void portduinoSetup() {
         }
     }
 
-    // 1) Load config from the default path (or a path supplied via env var).
-    const char* cfg_env = std::getenv("MR_CONFIG");
-    std::string cfg_path = cfg_env ? cfg_env : "rnoded.conf";
+    // 1) Load config. Precedence: --config CLI flag > $MR_CONFIG env >
+    //    default "rnoded.conf". The CLI flag is parsed by argp before
+    //    portduinoSetup() runs (registered via portduinoCustomInit()).
+    std::string cfg_path;
+    if (g_native_args.config_path && *g_native_args.config_path) {
+        cfg_path = g_native_args.config_path;
+    } else if (const char* cfg_env = std::getenv("MR_CONFIG"); cfg_env && *cfg_env) {
+        cfg_path = cfg_env;
+    } else {
+        cfg_path = "rnoded.conf";
+    }
     native_config::load(cfg_path);
 
     // 2) Optional --data-dir style override via env var.
@@ -131,7 +203,13 @@ void portduinoSetup() {
     native_pinmap::apply();
     native_pinmap::bind_linux_gpios();
 
-    // 5a) Surface the configured modem family to setup() so the native LoRa
+    // 5a) Extended NRESET pulse before any SPI traffic. Recovers a chip
+    //      that was wedged by a prior daemon crash (SIGKILL mid-opcode,
+    //      BUSY stuck high, etc.) before the modem driver's own 10 ms
+    //      reset() runs inside LoRa->begin(). No-op when pin_reset == -1.
+    clean_reset_at_boot();
+
+    // 5b) Surface the configured modem family to setup() so the native LoRa
     //     factory can instantiate the right driver. Must precede setup().
     current_modem = native_config::g_config.modem;
     const char* modem_name;
@@ -144,7 +222,7 @@ void portduinoSetup() {
     }
     std::fprintf(stderr, "[native] modem = %s (0x%02X)\n", modem_name, current_modem);
 
-    // 5b) KISS-over-TCP host transport. The embedded firmware's USB-serial
+    // 5c) KISS-over-TCP host transport. The embedded firmware's USB-serial
     //     KISS channel is replaced on native by a localhost TCP server.
     //     A failure to bind isn't fatal — the daemon keeps running like
     //     an embedded RNode with no USB cable plugged in. kiss_tcp_public

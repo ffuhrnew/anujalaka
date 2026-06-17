@@ -1,5 +1,5 @@
 [Unit]
-Description=RNode Native Daemon
+Description=RNode Daemon Service
 After=network-online.target
 StartLimitInterval=200
 StartLimitBurst=5
