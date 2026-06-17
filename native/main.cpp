@@ -115,27 +115,6 @@ void portduinoCustomInit() {
     portduinoAddArguments(child, &g_native_args);
 }
 
-void pulse_nreset(uint32_t low_ms, uint32_t high_settle_ms) {
-    if (pin_reset < 0) return;
-    pinMode(pin_reset, OUTPUT);
-    digitalWrite(pin_reset, LOW);
-    delay(low_ms);
-    digitalWrite(pin_reset, HIGH);
-    delay(high_settle_ms);
-}
-
-void clean_reset_at_boot() {
-    if (pin_reset < 0) {
-        // No reset pin configured (e.g. cross_platform / macOS sim, or a
-        // board that ties NRESET directly to host MCU reset). Boot-time
-        // reset is silently skipped — the modem driver's own reset() in
-        // begin() still runs.
-        return;
-    }
-    std::fprintf(stderr, "[radio] clean reset at boot (NRESET low 50ms, settle 20ms)\n");
-    pulse_nreset(50, 20);
-}
-
 // Portduino calls this before invoking the Arduino sketch's setup().
 // The symbol replaces Portduino's weak default (which has C++ linkage,
 // no extern "C") — match its signature exactly so the linker picks ours.
@@ -203,13 +182,7 @@ void portduinoSetup() {
     native_pinmap::apply();
     native_pinmap::bind_linux_gpios();
 
-    // 5a) Extended NRESET pulse before any SPI traffic. Recovers a chip
-    //      that was wedged by a prior daemon crash (SIGKILL mid-opcode,
-    //      BUSY stuck high, etc.) before the modem driver's own 10 ms
-    //      reset() runs inside LoRa->begin(). No-op when pin_reset == -1.
-    clean_reset_at_boot();
-
-    // 5b) Surface the configured modem family to setup() so the native LoRa
+    // 5a) Surface the configured modem family to setup() so the native LoRa
     //     factory can instantiate the right driver. Must precede setup().
     current_modem = native_config::g_config.modem;
     const char* modem_name;
@@ -222,7 +195,7 @@ void portduinoSetup() {
     }
     std::fprintf(stderr, "[native] modem = %s (0x%02X)\n", modem_name, current_modem);
 
-    // 5c) KISS-over-TCP host transport. The embedded firmware's USB-serial
+    // 5b) KISS-over-TCP host transport. The embedded firmware's USB-serial
     //     KISS channel is replaced on native by a localhost TCP server.
     //     A failure to bind isn't fatal — the daemon keeps running like
     //     an embedded RNode with no USB cable plugged in. kiss_tcp_public
