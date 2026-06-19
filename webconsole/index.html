@@ -174,7 +174,7 @@ const CMD_LOG=0x80, CMD_PROVISION_REQ=0x86, CMD_PROVISION_RSP=0x87;
 const CMD_RESET=0x55, CMD_RESET_BYTE=0xF8;
 const STAT_CMD_RANGE = [0x21, 0x29];
 
-const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Ack:100, Error:101 };
+const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Reboot:9, Ack:100, Error:101 };
 const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesList:7, Void:8 };
 // Provisioning field flags (Field.h FF_*). Mutually exclusive uses:
 //  - READ_ONLY:  info-only field (e.g. metrics). Server has a getter; client
@@ -848,6 +848,10 @@ class RnsTransport {
     this.onBytes = () => {};
     this.onStatus = () => {};
     this._userClosing = false;
+    // True once an involuntary close (RNS link_closed broadcast, no_active_link
+    // reply, etc.) has fired _handleInvoluntaryClose — keeps the teardown
+    // path idempotent under racing signals.
+    this._involuntaryClosed = false;
     this._reqIdCounter = 1;
     this._waiters = new Map();   // request_id → { onSuccess(body), onFailure(reason), onPhase?, onProgress? }
     this._pingWaiter = null;     // { resolve, reject, timerId } — for ws-verify ping/pong
@@ -858,7 +862,7 @@ class RnsTransport {
     // schemas; the snappy 5s default used on Serial/BLE/WebSocket times out
     // before the response can land. ProvisioningClient picks this up via
     // duck-typing if the property is set on the transport.
-    this.defaultRequestTimeoutMs = 60000;
+    this.defaultRequestTimeoutMs = 30000;
   }
 
   // Server phase strings → user-friendly status labels.
@@ -904,6 +908,7 @@ class RnsTransport {
 
   async connect(params){
     this.params = params;
+    this._involuntaryClosed = false;
     const { meshchatxUrl, destinationHash, aspect, autoIdentify } = params;
     if (!meshchatxUrl) throw new Error('missing MeshChatX URL');
     if (!destinationHash || !/^[0-9a-fA-F]{32}$/.test(destinationHash))
@@ -965,10 +970,10 @@ class RnsTransport {
         aspect,
         auto_identify: !!autoIdentify,
       }, {
-        // Path discovery (≤15s) + link establishment (≤15s) + identify, plus margin.
-        // Idle-timer resets on each phase event, so a server that's making progress
-        // won't trip this even on slow LoRa.
-        timeoutMs: 45000,
+        // Idle-timer resets on each phase event (finding_path →
+        // establishing_link → identifying), so a server making progress won't
+        // trip this even on slow LoRa.
+        timeoutMs: 30000,
         onPhase: (phase) => {
           const label = RnsTransport.PHASE_LABELS[phase] || phase;
           this.onStatus({state:'connecting', info: label});
@@ -1069,9 +1074,19 @@ class RnsTransport {
         const frame = kissEncode(CMD_PROVISION_RSP, respPayload);
         try { this.onBytes(frame); } catch(_) {}
       },
-      // Failure: drop. ProvisioningClient has its own 5s timeout that will
-      // reject the awaiting caller cleanly.
-      onFailure: () => {},
+      // Generic failures (timeout, etc.) drop — ProvisioningClient's own
+      // request timeout rejects the caller cleanly. But 'no_active_link' is
+      // MeshChatX's authoritative "this link is gone" reply: fast-path the
+      // transport into the involuntary-close teardown so we surface the drop
+      // and (if autoReconnect is on) kick startReconnect right away, rather
+      // than waiting for the broadcast / per-request UI timeout. 'ws_closed'
+      // is belt-and-suspenders against ws.onclose racing with an in-flight
+      // waiter — _handleInvoluntaryClose is idempotent.
+      onFailure: (reason) => {
+        if (reason === 'no_active_link' || reason === 'ws_closed') {
+          this._handleInvoluntaryClose(reason);
+        }
+      },
     });
   }
 
@@ -1091,6 +1106,42 @@ class RnsTransport {
 
   async forceClose(){
     this._userClosing = false;
+    // Evict MeshChatX's cached link for our (aspect, destination_hash) before
+    // tearing down the WS. MeshChatX caches by remote, not by client, and
+    // reuses the cache on the next rns.link.open until its own keepalive
+    // expires — so after a remote Reboot the rebuilt session would otherwise
+    // inherit a stale link that's already dead on the RNS side. Fire-and-
+    // forget: browsers flush queued WS frames before close (same pattern as
+    // the page-unload handler above), so the close request reaches MeshChatX
+    // and we don't have to block on a reply we don't need.
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.params) {
+      try {
+        this.ws.send(JSON.stringify({
+          type: 'rns.link.close',
+          request_id: this._nextReqId(),
+          destination_hash: this.params.destinationHash.toLowerCase(),
+          aspect: this.params.aspect,
+        }));
+      } catch(_) {}
+    }
+    try { if (this.ws) this.ws.close(); } catch(_) {}
+  }
+
+  // Fired when the RNS Link or the underlying WS goes down without us asking
+  // (MeshChatX link_closed broadcast, no_active_link reply on a request, etc).
+  // Fails in-flight waiters immediately so callers don't sit on a 30s
+  // ProvisioningClient timeout, then closes the WS — ws.onclose is what
+  // actually emits 'closed' onStatus (since _userClosing stays false), which
+  // routes through onTransportStatus to startReconnect when autoReconnect is
+  // on. Idempotent so concurrent signals (broadcast + request failure +
+  // ws.onclose racing during a remote reboot) collapse to one teardown.
+  _handleInvoluntaryClose(reason){
+    if (this._involuntaryClosed) return;
+    this._involuntaryClosed = true;
+    for (const w of this._waiters.values()) {
+      try { w.onFailure && w.onFailure(reason); } catch(_) {}
+    }
+    this._waiters.clear();
     try { if (this.ws) this.ws.close(); } catch(_) {}
   }
 
@@ -1138,8 +1189,27 @@ class RnsTransport {
     }
     if (!msg.type.startsWith('rns.link.')) return; // ignore other broadcasts (config, announce, …)
 
-    // Async server-pushed events (no request_id correlation).
-    if (msg.type === 'rns.link.event') return;
+    // Async server-pushed events (no request_id correlation). MeshChatX fires
+    // rns.link.event { event: 'link_closed' } from RNS's link_closed_callback —
+    // so it covers remote teardowns, RNS-detected link timeouts (e.g. after a
+    // remote reboot), and our own teardown alike. (packet_received variants
+    // are out of scope — Provisioning is request/response, so unsolicited
+    // packets have no consumer yet.)
+    if (msg.type === 'rns.link.event') {
+      if (msg.event !== 'link_closed') return;
+      // The broadcast bus is per-MeshChatX-instance: events for other links
+      // (different destination_hash / aspect) share it, so filter to ours.
+      const dh = (msg.destination_hash || '').toLowerCase();
+      const wantDh = (this.params && this.params.destinationHash || '').toLowerCase();
+      if (!wantDh || dh !== wantDh) return;
+      if (this.params && msg.aspect !== this.params.aspect) return;
+      // Suppress for our own disconnect() — link_closed fires for our
+      // outbound rns.link.close too, and we don't want auto-reconnect to
+      // engage after the user clicked Disconnect.
+      if (this._userClosing) return;
+      this._handleInvoluntaryClose('link_closed');
+      return;
+    }
 
     const w = this._waiters.get(msg.request_id);
     if (!w) return;
@@ -1342,9 +1412,27 @@ class ProvisioningClient {
     const m = body instanceof Map ? body : new Map();
     return { needsReboot: !!m.get(CK.NeedsReboot) };
   }
+  // First-class Provisioning reboot — the library sends an Ack before
+  // invoking the registered reboot callback, so a healthy device responds.
+  // The Ack can still race with the actual reset (especially over slow RNS
+  // links), so we use a short per-call timeout and treat *timeout* as
+  // success: the request was emitted, the device almost certainly acted on
+  // it. The only hard failure we surface is UnknownOp (code 2) — a device
+  // too old to know about OP.Reboot — so callers can fall back cleanly to
+  // the legacy KISS reset path.
+  async requestReboot(){
+    try {
+      await this._request(OP.Reboot, null, 3000);
+    } catch (e) {
+      if (e && Number(e.code) === 2) throw e;   // UnknownOp — propagate
+      // timeout / connection-lost / link teardown mid-request — assume
+      // the reboot fired and let the caller proceed with teardown.
+    }
+  }
   // Fire-and-forget reset via the legacy RNode KISS reset frame
   // (FEND CMD_RESET CMD_RESET_BYTE FEND). The device reboots immediately,
-  // so there is no response — we just send the bytes.
+  // so there is no response — we just send the bytes. Used as the fallback
+  // for legacy RNodes that don't implement OP.Reboot.
   async reboot(){
     await this.t.send(kissEncode(CMD_RESET, new Uint8Array([CMD_RESET_BYTE])));
   }
@@ -2366,12 +2454,22 @@ async function reboot(){
     : 'Reboot the device now? You will be disconnected.';
   if (!confirm(msg)) return;
   try {
-    await client.reboot();
+    // Prefer the first-class Provisioning OP.Reboot — works over any
+    // transport, including RNS where legacy KISS CMD_RESET is filtered.
+    // UnknownOp (code 2) means the device's microReticulum is older than
+    // OP.Reboot; fall back to the legacy KISS path.
+    try {
+      await client.requestReboot();
+    } catch (e) {
+      if (e && Number(e.code) === 2) await client.reboot();
+      else throw e;
+    }
     // Reflect the imminent disconnect immediately, AND force-close the transport.
     // The force-close matters on UART-to-USB bridges (CP2102, CH340, etc) where
     // the host's serial connection survives the ESP32 reset — without it, the
     // read loop never observes a disconnect, 'closed' never fires, startReconnect
-    // never runs, and the UI is stuck in "Reconnecting…" forever.
+    // never runs, and the UI is stuck in "Reconnecting…" forever. On RNS it
+    // also fires rns.link.close so MeshChatX evicts its cached Link.
     if (auto) state.reconnecting.set(true);
     showToast(auto
       ? 'Reboot command sent — reconnecting…'
@@ -2583,6 +2681,7 @@ function buildTopBar(){
   state.rnsDestHash.subscribe(update);
   state.rnsAspect.subscribe(update);
   state.rnsAutoIdentify.subscribe(update);
+
   state.autoReconnect.subscribe(update);
   state.reconnecting.subscribe(update);
   return root;
@@ -2621,21 +2720,33 @@ function buildTabBar(){
     // Treat "reconnecting" as not-yet-connected so per-tab actions don't fire
     // against a transport that's still being re-established.
     const connected = state.conn.get().state === 'connected' && !state.reconnecting.get();
-    const showCfg = transportConfigVisible();
-    // legacySupported starts null (not yet probed) — show Node Config until we
-    // confirm the device doesn't respond, to avoid hiding it before the probe
-    // completes on slower devices.
-    const showNcfg = state.legacySupported.get() !== false;
+    // Capability-gated visibility: every tab other than Node Status only
+    // surfaces once we've positively confirmed the active transport supports
+    // it. While disconnected (or reconnecting), only Node Status shows.
+    //   - Node Config (legacy KISS opcodes): requires legacySupported === true
+    //     (CMD_BOARD probe succeeded). Starts null and the probe takes up to
+    //     1500ms, during which we keep the tab hidden — a brief delay is
+    //     preferable to a flash-then-hide.
+    //   - Transport Config (Provisioning + RNS namespaces): requires
+    //     transportConfigVisible() (schema fetched and has an id<100 ns).
+    //   - Logs (KISS CMD_LOG frames from the device): not delivered over RNS
+    //     because RnsTransport only forwards CMD_PROVISION_RSP frames back.
+    const isRns = state.transportName.get() === 'rns';
+    const showNcfg = connected && state.legacySupported.get() === true;
+    const showCfg  = connected && transportConfigVisible();
+    const showLogs = connected && !isRns;
     for (const t of tabs) {
       const b = buttons[t.id];
       b.classList.toggle('active', active === t.id);
       b.disabled = !connected && t.id !== 'status';
-      if (t.id === 'config') b.style.display = showCfg ? '' : 'none';
+      if (t.id === 'config')     b.style.display = showCfg  ? '' : 'none';
       if (t.id === 'nodeconfig') b.style.display = showNcfg ? '' : 'none';
+      if (t.id === 'logs')       b.style.display = showLogs ? '' : 'none';
     }
     // Redirect away from any hidden tab so the user isn't on an invisible body.
-    if (!showCfg && active === 'config') state.activeTab.set('status');
+    if (!showCfg  && active === 'config')     state.activeTab.set('status');
     if (!showNcfg && active === 'nodeconfig') state.activeTab.set('status');
+    if (!showLogs && active === 'logs')       state.activeTab.set('status');
   }
   update();
   state.activeTab.subscribe(update);
@@ -2643,6 +2754,7 @@ function buildTabBar(){
   state.reconnecting.subscribe(update);
   state.schema.subscribe(update);
   state.legacySupported.subscribe(update);
+  state.transportName.subscribe(update);
   return root;
 }
 slots.tabbar.appendChild(buildTabBar());
@@ -3216,6 +3328,10 @@ function buildConfigTab(){
 
   // Cleanup for the inner-mounted namespace panel
   let nsCleanups = [];
+  // After this many ms in the "Loading…" state, show a "timed out + Refresh"
+  // view. Matches the RNS request timeout so on a stalled connection the
+  // UI surfaces a retry control instead of an indefinite spinner.
+  const LOAD_TIMEOUT_MS = 30000;
   function mountNs(nsId){
     for (const fn of nsCleanups) { try { fn(); } catch(_) {} }
     nsCleanups = [];
@@ -3230,6 +3346,19 @@ function buildConfigTab(){
     const allLoaded = treeIds.length > 0 && treeIds.every(id => !!loaded[id]);
     if (!allLoaded) {
       detail.appendChild(el('em', null, 'Loading…'));
+      const timerId = setTimeout(() => {
+        // Only swap to the timeout view if we're still in the loading state —
+        // a successful fetch in the meantime will have re-entered mountNs and
+        // cleared this timer via nsCleanups.
+        const cur = state.nsLoaded.get();
+        const stillLoading = !(treeIds.length > 0 && treeIds.every(id => !!cur[id]));
+        if (!stillLoading) return;
+        detail.innerHTML = '';
+        detail.appendChild(el('div', { class: 'notice' }, 'Loading timed out.'));
+        const retry = el('button', { class: 'primary', onclick: () => refreshNamespace(nsId) }, 'Refresh');
+        detail.appendChild(retry);
+      }, LOAD_TIMEOUT_MS);
+      nsCleanups.push(() => clearTimeout(timerId));
       fetchNamespaceIfNeeded(nsId);
       return;
     }
@@ -3292,14 +3421,12 @@ function buildConfigTab(){
   bodyCleanups.push(state.schema.subscribe(() => { rebuildSidenav(); mountNs(state.activeNsTab.get()); }));
   bodyCleanups.push(state.activeNsTab.subscribe((nsId) => { updateNavActive(); mountNs(nsId); }));
   bodyCleanups.push(state.nsLoaded.subscribe(() => {
+    // Remount on every nsLoaded change so transitions in both directions are
+    // visible: loaded → invalidated (Refresh / Save / Commit) shows the
+    // "Loading…" placeholder again with a fresh 30s timeout, and
+    // invalidated → loaded swaps back to the populated panel.
     const cur = state.activeNsTab.get();
-    if (cur != null) {
-      // Re-check whether the whole tree is now loaded; only remount once it is.
-      const schema = state.schema.get();
-      const ids = schema ? getNsTreeIds(schema, cur) : [Number(cur)];
-      const loaded = state.nsLoaded.get();
-      if (ids.length > 0 && ids.every(id => !!loaded[id])) mountNs(cur);
-    }
+    if (cur != null) mountNs(cur);
   }));
   bodyCleanups.push(state.nsState.subscribe(updateNavDots));
   bodyCleanups.push(() => { for (const fn of nsCleanups) try { fn(); } catch(_) {} });

@@ -47,6 +47,7 @@ extern int lora_txp;
 extern uint32_t lora_bw;
 extern uint32_t lora_freq;
 extern uint32_t lora_bitrate;
+extern uint8_t implicit_l;
 extern int noise_floor;
 extern int current_rssi;
 extern int last_rssi;
@@ -65,6 +66,8 @@ extern bool kiss_framed_logs;
 extern bool nomadnet_enabled;
 extern RNS::Destination nomadnet_destination;
 extern char nomadnet_name[64];
+extern void hard_reset(void);
+extern void eeprom_conf_save();
 
 // ---------------------------------------------------------------------------
 // External hooks into the rest of the firmware.
@@ -90,7 +93,7 @@ RNS::Bytes provision_rx_buf;
 
 // ---------------------------------------------------------------------------
 // Register Provisioning namespaces. Called from init_provisioning()
-// before Manager::begin().
+// before Provisioner::begin().
 //
 // The "radio" namespace registration is kept here purely as reference —
 // EEPROM is currently the source of truth for radio configuration and a
@@ -101,8 +104,8 @@ RNS::Bytes provision_rx_buf;
 static void register_provisioning_namespaces() {
   using namespace RNS::Provisioning;
 
-  // ----- general namespace -----
-  auto general = Manager::instance()
+  // ----- General namespace -----
+  auto general = Provisioner::instance()
     .register_namespace("General", PROV_NS_GENERAL)
       .field_bool("kiss_framed_logs", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, kiss_framed_logs,
         [](const Value& v) { kiss_framed_logs = v.as_bool(); return true; },
@@ -178,6 +181,10 @@ static void register_provisioning_namespaces() {
   }
 #endif
 
+    //general
+    //  .command_void("reboot", PROV_GENERAL_REBOOT,
+    //    []() { hard_reset(); return true; });
+
   general
     .end();   // close "General"
 
@@ -188,7 +195,7 @@ static void register_provisioning_namespaces() {
   // interface object reports it has a live implementation (operator bool
   // on RNS::Interface). Compile-time guards remain only where they need
   // to — UDP's externs aren't declared without UDP_TRANSPORT.
-  auto metrics = Manager::instance().namespace_("Metrics", PROV_NS_METRICS);
+  auto metrics = Provisioner::instance().namespace_("Metrics", PROV_NS_METRICS);
 
   metrics.namespace_("Destinations", PROV_NS_METRICS_DSTS)
     .metric_bytes("transport_identity", PROV_METRICS_TRANS_ID, []() { return RNS::Transport::identity() ? RNS::Transport::identity().hash() : RNS::Bytes{}; })
@@ -231,51 +238,94 @@ static void register_provisioning_namespaces() {
 
   metrics.end();        // close "Metrics"
 
-  // ----- radio namespace (DISABLED) -----
+#if defined(LORA_TRANSPORT)
+  // ----- Radio namespace (DISABLED) -----
   //
-  // Manager::instance()
-  //   .register_namespace("radio", PROV_NS_RADIO)
-  //     .field_enum("op_mode", PROV_RADIO_OP_MODE, FF_REBOOT_REQUIRED,
-  //                (fint_t)MODE_HOST,
-  //                std::vector<fint_t>{ (fint_t)MODE_HOST, (fint_t)MODE_TNC },
-  //                std::vector<std::string>{ "host", "tnc" },
-  //                [](const Value& v) { op_mode = (uint8_t)v.as_int(); return true; })
-  //     .field_int("frequency", PROV_RADIO_FREQ, FF_REBOOT_REQUIRED,
-  //                (fint_t)0, (fint_t)100000000, (fint_t)1000000000,
-  //                [](const Value& v) { lora_freq = (uint32_t)v.as_int(); return true; })
-  //     .field_int("bandwidth", PROV_RADIO_BW, FF_REBOOT_REQUIRED,
-  //                (fint_t)0, (fint_t)7800, (fint_t)500000,
-  //                [](const Value& v) { lora_bw = (uint32_t)v.as_int(); return true; })
-  //     .field_int("sf", PROV_RADIO_SF, FF_REBOOT_REQUIRED,
-  //                (fint_t)0, (fint_t)5, (fint_t)12,
-  //                [](const Value& v) { lora_sf = (int)v.as_int(); return true; })
-  //     .field_int("cr", PROV_RADIO_CR, FF_REBOOT_REQUIRED,
-  //                (fint_t)5, (fint_t)5, (fint_t)8,
-  //                [](const Value& v) { lora_cr = (int)v.as_int(); return true; })
-  //     .field_int("txp", PROV_RADIO_TXP, FF_REBOOT_REQUIRED,
-  //                (fint_t)0xFF, (fint_t)-9, (fint_t)22,
-  //                [](const Value& v) { lora_txp = (int)v.as_int(); return true; })
-  //     .field_int("implicit_l", PROV_RADIO_IMPLICIT, FF_REBOOT_REQUIRED,
-  //                (fint_t)0, (fint_t)0, (fint_t)255,
-  //                [](const Value& v) { implicit_l = (uint8_t)v.as_int(); return true; })
-  //     .end();
+  Provisioner::instance()
+    .register_namespace("Radio", PROV_NS_RADIO)
+      //.field_enum("op_mode", PROV_RADIO_OP_MODE, FF_REBOOT_REQUIRED,
+      //           (fint_t)MODE_HOST,
+      //           std::vector<fint_t>{ (fint_t)MODE_HOST, (fint_t)MODE_TNC },
+      //           std::vector<std::string>{ "host", "tnc" },
+      //           [](const Value& v) { op_mode = (uint8_t)v.as_int(); return true; })
+      .field_int("frequency", PROV_RADIO_FREQ, FF_REBOOT_REQUIRED,
+        (fint_t)0, (fint_t)100000000, (fint_t)1000000000,
+        [](const Value& v) { lora_freq = (uint32_t)v.as_int(); return true; })
+      .field_int("bandwidth", PROV_RADIO_BW, FF_REBOOT_REQUIRED,
+        (fint_t)0, (fint_t)7800, (fint_t)500000,
+        [](const Value& v) { lora_bw = (uint32_t)v.as_int(); return true; })
+      .field_int("sf", PROV_RADIO_SF, FF_REBOOT_REQUIRED,
+        (fint_t)0, (fint_t)5, (fint_t)12,
+        [](const Value& v) { lora_sf = (int)v.as_int(); return true; })
+      .field_int("cr", PROV_RADIO_CR, FF_REBOOT_REQUIRED,
+        (fint_t)5, (fint_t)5, (fint_t)8,
+        [](const Value& v) { lora_cr = (int)v.as_int(); return true; })
+      .field_int("txp", PROV_RADIO_TXP, FF_REBOOT_REQUIRED,
+        (fint_t)0xFF, (fint_t)-9, (fint_t)22,
+        [](const Value& v) { lora_txp = (int)v.as_int(); return true; })
+      .field_int("implicit_l", PROV_RADIO_IMPLICIT, FF_REBOOT_REQUIRED,
+        (fint_t)0, (fint_t)0, (fint_t)255,
+        [](const Value& v) { implicit_l = (uint8_t)v.as_int(); return true; })
+      .on_commit([](Namespace& ns) {
+        printf("[provision] Radio commit\n");
+        Value v;
+        bool dirty = false;
+        if (ns.draft(PROV_RADIO_FREQ, v)) {
+          lora_freq = (uint32_t)v.as_int();
+          ns.clear_draft(PROV_RADIO_FREQ);
+          dirty = true;
+        }
+        if (ns.draft(PROV_RADIO_BW, v)) {
+          lora_freq = (uint32_t)v.as_int();
+          ns.clear_draft(PROV_RADIO_BW);
+          dirty = true;
+        }
+        if (ns.draft(PROV_RADIO_SF, v)) {
+          lora_freq = (uint32_t)v.as_int();
+          ns.clear_draft(PROV_RADIO_SF);
+          dirty = true;
+        }
+        if (ns.draft(PROV_RADIO_CR, v)) {
+          lora_freq = (uint32_t)v.as_int();
+          ns.clear_draft(PROV_RADIO_CR);
+          dirty = true;
+        }
+        if (ns.draft(PROV_RADIO_TXP, v)) {
+          lora_freq = (uint32_t)v.as_int();
+          ns.clear_draft(PROV_RADIO_TXP);
+          dirty = true;
+        }
+        if (dirty) {
+          printf("[provision] Writing eeprom\n");
+          eeprom_conf_save();
+        }
+      })
+      .end();
+#endif
+
 }
 
 // ---------------------------------------------------------------------------
 // Bring the Provisioning subsystem up. Loads any persisted MsgPack files
 // under /config (built-in Reticulum / Transport namespaces auto-register
 // inside begin(); our general namespace is registered above). The
-// on_reboot_requested callback is wired up but intentionally a no-op —
+// on_reboot_required callback is wired up but intentionally a no-op —
 // the host orchestrates reboots via CMD_RESET.
 // ---------------------------------------------------------------------------
 void init_provisioning() {
-  RNS::Provisioning::Manager::instance().on_reboot_requested([]() {
-    // Host orchestrates reboot via CMD_RESET. Manager::needs_reboot()
+  RNS::Provisioning::Provisioner::instance().on_factory_reset([]() {
+    // Not currently implemented
+  });
+  RNS::Provisioning::Provisioner::instance().on_reboot_required([]() {
+    // Host orchestrates reboot via CMD_RESET. Provisioner::needs_reboot()
     // remains queryable via GetInfo for callers that want to surface
     // pending-reboot state.
   });
+  RNS::Provisioning::Provisioner::instance().on_reboot([]() {
+    hard_reset();
+  });
   register_provisioning_namespaces();
-  RNS::Provisioning::Manager::instance().begin();
+  RNS::Provisioning::Provisioner::instance().begin();
   provisioning_started = true;
 }
 
@@ -284,7 +334,7 @@ void init_provisioning() {
 // ---------------------------------------------------------------------------
 void on_provision_request(const RNS::Bytes& req) {
   if (!provisioning_started) return;
-  RNS::Bytes response = RNS::Provisioning::Manager::instance().handle_message(req);
+  RNS::Bytes response = RNS::Provisioning::Provisioner::instance().handle_message(req);
   kiss_indicate_provision_response(response);
 }
 

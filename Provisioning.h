@@ -54,6 +54,7 @@
 #define PROV_GENERAL_UDP_MODE        3
 #define PROV_GENERAL_NOMADNET_ENABLE 4
 #define PROV_GENERAL_NOMADNET_NAME   5
+#define PROV_GENERAL_REBOOT          100
 
 #define PROV_METRICS_TRANS_ID   1
 #define PROV_METRICS_PROBE_DST  2
@@ -82,7 +83,7 @@
 #define PROV_RADIO_TXP          6
 #define PROV_RADIO_IMPLICIT     7
 
-// Set true once Provisioning::Manager::begin() has run.
+// Set true once Provisioning::Provisioner::begin() has run.
 extern bool provisioning_started;
 
 // Buffer for an in-flight CMD_PROVISION_REQ frame. Bytes are un-escaped
@@ -95,7 +96,7 @@ extern RNS::Bytes provision_rx_buf;
 // reads can resolve.
 void init_provisioning();
 
-// Dispatch one un-escaped MsgPack envelope to the Provisioning Manager
+// Dispatch one un-escaped MsgPack envelope to the Provisioning Provisioner
 // and emit the framed MsgPack response back over KISS.
 void on_provision_request(const RNS::Bytes& req);
 

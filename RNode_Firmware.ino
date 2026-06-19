@@ -875,7 +875,7 @@ void setup() {
       // CBA NOTE: All app-default-values must be set *before* calling init_provisioning so that they take effect for fresh installs
       HEAD("Initializing Provisioning subsystem...", RNS::LOG_TRACE);
       init_provisioning();
-      auto& prov = RNS::Provisioning::Manager::instance();
+      auto& prov = RNS::Provisioning::Provisioner::instance();
 #endif
 
       //reticulum.clear_caches();
