@@ -835,6 +835,324 @@ class WebSocketTransport {
   }
 }
 
+// ===== RNS-over-MeshChatX transport =====
+// Bridges the upper-layer KISS-framed Provisioning protocol to MeshChatX's
+// generic rns.link.* WebSocket API, which terminates on an RNS Link to the
+// remote node. CMD_PROVISION_REQ frames are unwrapped to rns.link.request
+// payloads; the request body comes back, gets re-wrapped as CMD_PROVISION_RSP,
+// and is pushed to onBytes so ProvisioningClient sees the exchange unchanged.
+class RnsTransport {
+  constructor(){
+    this.ws = null;
+    this.params = null;          // { meshchatxUrl, destinationHash, aspect, autoIdentify }
+    this.onBytes = () => {};
+    this.onStatus = () => {};
+    this._userClosing = false;
+    this._reqIdCounter = 1;
+    this._waiters = new Map();   // request_id → { onSuccess(body), onFailure(reason), onPhase?, onProgress? }
+    this._pingWaiter = null;     // { resolve, reject, timerId } — for ws-verify ping/pong
+    this._kissOut = new KissDecoder((cmd, payload) => this._onOutgoingKissFrame(cmd, payload));
+    this._unloadHandler = null;  // bound page-unload listener (attached during connect)
+    // Advertised default for ProvisioningClient.request timeouts when this
+    // transport is in use. LoRa Resource transfers commonly take 10-30s for
+    // schemas; the snappy 5s default used on Serial/BLE/WebSocket times out
+    // before the response can land. ProvisioningClient picks this up via
+    // duck-typing if the property is set on the transport.
+    this.defaultRequestTimeoutMs = 60000;
+  }
+
+  // Server phase strings → user-friendly status labels.
+  static PHASE_LABELS = {
+    finding_path: 'Finding path',
+    establishing_link: 'Establishing link',
+    identifying: 'Authenticating',
+  };
+
+  // Server failure_reason strings → human-friendly error messages.
+  static FAILURE_LABELS = {
+    no_path_to_destination: 'No path to destination (no announce received yet?)',
+    link_establishment_timeout: 'Link establishment timed out',
+    no_identity_for_destination: 'Identity not recalled for destination',
+    no_local_identity: 'No local identity available on MeshChatX',
+    no_active_link: 'Link is not active',
+    ws_closed: 'WebSocket disconnected',
+    timeout: 'Operation timed out',
+    ws_verify_timeout: 'MeshChatX did not respond to ping',
+    missing_destination_or_aspect: 'Missing destination hash or aspect',
+    invalid_destination_hash: 'Destination hash is not valid hex',
+  };
+  static _friendlyFailure(reason){
+    if (!reason) return 'failure';
+    return RnsTransport.FAILURE_LABELS[reason] || reason;
+  }
+  static available(){ return true; }
+
+  _nextReqId(){ return this._reqIdCounter++; }
+
+  static _b64Encode(bytes){
+    let s = '';
+    for (let i = 0; i < bytes.length; ++i) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  }
+  static _b64Decode(b64){
+    if (!b64) return new Uint8Array(0);
+    const s = atob(b64);
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; ++i) out[i] = s.charCodeAt(i);
+    return out;
+  }
+
+  async connect(params){
+    this.params = params;
+    const { meshchatxUrl, destinationHash, aspect, autoIdentify } = params;
+    if (!meshchatxUrl) throw new Error('missing MeshChatX URL');
+    if (!destinationHash || !/^[0-9a-fA-F]{32}$/.test(destinationHash))
+      throw new Error('destination hash must be 32 hex characters');
+    if (!aspect) throw new Error('missing aspect');
+
+    // Stage 1: open the WebSocket to MeshChatX.
+    this.onStatus({state:'connecting', info: 'WS connecting'});
+    await new Promise((resolve, reject) => {
+      try {
+        this.ws = new WebSocket(meshchatxUrl);
+        let opened = false;
+        this.ws.onopen = () => {
+          opened = true;
+          // Attach unload handlers immediately on WS open. From this point on,
+          // a page refresh / tab close can race with an in-flight rns.link.open,
+          // and we want a synchronous best-effort teardown to ride along.
+          this._attachUnloadHandlers();
+          resolve();
+        };
+        this.ws.onmessage = (e) => this._onWsMessage(e);
+        this.ws.onerror = () => { if (!opened) reject(new Error('WebSocket connect failed (check URL / TLS / firewall)')); };
+        this.ws.onclose = () => {
+          // Fail any in-flight waiters so callers don't hang.
+          for (const w of this._waiters.values()) { try { w.onFailure && w.onFailure('ws_closed'); } catch(_) {} }
+          this._waiters.clear();
+          if (this._pingWaiter) {
+            const w = this._pingWaiter; this._pingWaiter = null;
+            try { clearTimeout(w.timerId); } catch(_) {}
+            try { w.reject(new Error('ws_closed')); } catch(_) {}
+          }
+          this._detachUnloadHandlers();
+          this.onStatus({state: this._userClosing ? 'idle' : 'closed'});
+        };
+      } catch (e) { this.onStatus({state:'error', info: e.message}); reject(e); }
+    });
+
+    // Stage 2: verify the WS is actually a working MeshChatX endpoint
+    // (and not, say, a different server that happens to accept WS upgrades)
+    // by sending a ping and waiting for a pong. Confirms bidirectional
+    // message flow before we commit to the slow Link setup.
+    this.onStatus({state:'connecting', info: 'WS verifying'});
+    try {
+      await this._pingServer(5000);
+    } catch (e) {
+      const reason = e && e.message === 'timeout' ? 'ws_verify_timeout' : (e.message || 'ws_verify_failed');
+      this.onStatus({state:'error', info: RnsTransport._friendlyFailure(reason)});
+      try { this.ws && this.ws.close(); } catch(_) {}
+      throw new Error(reason);
+    }
+
+    // Stage 3: open the Link (and optionally identify) via the MeshChatX backend.
+    // The server emits 'phase' events as it makes progress through path discovery,
+    // link establishment, and identification — surface them as their friendly labels.
+    this.onStatus({state:'connecting', info: 'Link connecting'});
+    try {
+      const result = await this._sendAndWait('rns.link.open', {
+        destination_hash: destinationHash.toLowerCase(),
+        aspect,
+        auto_identify: !!autoIdentify,
+      }, {
+        // Path discovery (≤15s) + link establishment (≤15s) + identify, plus margin.
+        // Idle-timer resets on each phase event, so a server that's making progress
+        // won't trip this even on slow LoRa.
+        timeoutMs: 45000,
+        onPhase: (phase) => {
+          const label = RnsTransport.PHASE_LABELS[phase] || phase;
+          this.onStatus({state:'connecting', info: label});
+        },
+      });
+      const ident = result && result.identified ? ' (identified)' : '';
+      this.onStatus({state:'connected', info: aspect + ' @ ' + destinationHash.slice(0,8) + ident});
+    } catch (e) {
+      const reason = (e && e.message) || 'failure';
+      this.onStatus({state:'error', info: RnsTransport._friendlyFailure(reason)});
+      try { this.ws && this.ws.close(); } catch(_) {}
+      throw e;
+    }
+  }
+
+  // Best-effort synchronous teardown when the page is being unloaded
+  // (reload, tab close, navigation). Without this, the server keeps polling
+  // path-discovery / link-establishment for an in-flight rns.link.open, may
+  // cache a half-finished link, and emits broadcast events to a renderer
+  // that's already torn down. We can't await here — the page is dying — but
+  // browsers do flush queued WebSocket frames before the connection terminates,
+  // so a fire-and-forget rns.link.close + a clean WebSocket.close(1000) gets the
+  // message to the server in practice.
+  _attachUnloadHandlers(){
+    if (this._unloadHandler) return;
+    this._unloadHandler = () => {
+      try {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && this.params) {
+          this.ws.send(JSON.stringify({
+            type: 'rns.link.close',
+            request_id: this._nextReqId(),
+            destination_hash: this.params.destinationHash.toLowerCase(),
+            aspect: this.params.aspect,
+          }));
+          // Status 1000 = normal closure. Without this the browser may emit
+          // an abnormal-close (1006) which the server can't distinguish from a
+          // network error.
+          this.ws.close(1000, 'page-unload');
+        }
+      } catch (_) { /* page is dying; nothing useful to do */ }
+    };
+    window.addEventListener('beforeunload', this._unloadHandler);
+    window.addEventListener('pagehide', this._unloadHandler);
+  }
+
+  _detachUnloadHandlers(){
+    if (!this._unloadHandler) return;
+    window.removeEventListener('beforeunload', this._unloadHandler);
+    window.removeEventListener('pagehide', this._unloadHandler);
+    this._unloadHandler = null;
+  }
+
+  // Send a {type:"ping"} JSON frame and wait for the matching {type:"pong"}.
+  // MeshChatX's main /ws bus has supported this since the WebSocket API was
+  // documented (meshchatx_api.md §2.1).
+  _pingServer(timeoutMs){
+    return new Promise((resolve, reject) => {
+      const timerId = setTimeout(() => {
+        if (this._pingWaiter && this._pingWaiter.timerId === timerId) {
+          this._pingWaiter = null;
+          reject(new Error('timeout'));
+        }
+      }, timeoutMs);
+      this._pingWaiter = { resolve, reject, timerId };
+      try { this.ws.send(JSON.stringify({type:'ping'})); }
+      catch (e) {
+        clearTimeout(timerId);
+        this._pingWaiter = null;
+        reject(e);
+      }
+    });
+  }
+
+  async reconnect(){
+    if (!this.params) throw new Error('no params to reconnect');
+    this._userClosing = false;
+    await this.connect(this.params);
+  }
+
+  // The upper layer hands us KISS bytes. Decode the frame; if it's a
+  // PROVISION_REQ, unwrap it onto rns.link.request. Other opcodes are silently
+  // dropped (legacy KISS / CMD_RESET / etc are not transported over this link).
+  async send(bytes){
+    this._kissOut.feed(bytes);
+  }
+
+  _onOutgoingKissFrame(cmd, payload){
+    if (cmd !== CMD_PROVISION_REQ) return;
+    const { destinationHash, aspect } = this.params;
+    this._sendAndWait('rns.link.request', {
+      destination_hash: destinationHash.toLowerCase(),
+      aspect,
+      path: '/provision',
+      data_b64: RnsTransport._b64Encode(payload),
+    }, {
+      onSuccess: (body) => {
+        const respPayload = RnsTransport._b64Decode(body.body_b64 || '');
+        const frame = kissEncode(CMD_PROVISION_RSP, respPayload);
+        try { this.onBytes(frame); } catch(_) {}
+      },
+      // Failure: drop. ProvisioningClient has its own 5s timeout that will
+      // reject the awaiting caller cleanly.
+      onFailure: () => {},
+    });
+  }
+
+  async disconnect(){
+    this._userClosing = true;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.params) {
+      try {
+        await this._sendAndWait('rns.link.close', {
+          destination_hash: this.params.destinationHash.toLowerCase(),
+          aspect: this.params.aspect,
+        }, {});
+      } catch(_) {}
+    }
+    try { if (this.ws) this.ws.close(); } catch(_) {}
+    this.ws = null;
+  }
+
+  async forceClose(){
+    this._userClosing = false;
+    try { if (this.ws) this.ws.close(); } catch(_) {}
+  }
+
+  // Send a JSON command and return a promise that resolves on the matching
+  // {status:"success"} frame and rejects on {status:"failure"} or after
+  // timeoutMs of idle (phase/progress events count as activity and reset the
+  // idle timer). Optional onPhase/onProgress callbacks consume intermediate
+  // frames.
+  _sendAndWait(type, body, { onPhase, onProgress, onSuccess, onFailure, timeoutMs = 15000 } = {}){
+    const request_id = this._nextReqId();
+    const frame = Object.assign({ type, request_id }, body);
+    return new Promise((resolve, reject) => {
+      let timerId = null;
+      const armTimer = () => {
+        if (timerId !== null) clearTimeout(timerId);
+        timerId = setTimeout(() => {
+          if (!this._waiters.has(request_id)) return;
+          this._waiters.delete(request_id);
+          try { onFailure && onFailure('timeout'); } catch(_) {}
+          reject(new Error(type + ' timeout after ' + timeoutMs + 'ms'));
+        }, timeoutMs);
+      };
+      this._waiters.set(request_id, {
+        onPhase: (p) => { armTimer(); if (onPhase) try { onPhase(p); } catch(_) {} },
+        onProgress: (pr) => { armTimer(); if (onProgress) try { onProgress(pr); } catch(_) {} },
+        onSuccess: (msg) => { if (timerId !== null) clearTimeout(timerId); if (onSuccess) try { onSuccess(msg); } catch(_) {} resolve(msg); },
+        onFailure: (reason) => { if (timerId !== null) clearTimeout(timerId); if (onFailure) try { onFailure(reason); } catch(_) {} reject(new Error(reason || 'failure')); },
+      });
+      try { this.ws.send(JSON.stringify(frame)); armTimer(); }
+      catch (e) { if (timerId !== null) clearTimeout(timerId); this._waiters.delete(request_id); reject(e); }
+    });
+  }
+
+  _onWsMessage(e){
+    let msg;
+    try { msg = JSON.parse(typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data)); }
+    catch (_) { return; }
+    if (!msg || typeof msg.type !== 'string') return;
+
+    // ws-verify ping/pong (used during connect() stage 2).
+    if (msg.type === 'pong') {
+      const w = this._pingWaiter;
+      if (w) { this._pingWaiter = null; try { clearTimeout(w.timerId); } catch(_) {} w.resolve(msg); }
+      return;
+    }
+    if (!msg.type.startsWith('rns.link.')) return; // ignore other broadcasts (config, announce, …)
+
+    // Async server-pushed events (no request_id correlation).
+    if (msg.type === 'rns.link.event') return;
+
+    const w = this._waiters.get(msg.request_id);
+    if (!w) return;
+    const status = msg.status;
+    if (status === 'phase') { if (w.onPhase) try { w.onPhase(msg.phase); } catch(_) {} return; }
+    if (status === 'progress') { if (w.onProgress) try { w.onProgress(msg.progress); } catch(_) {} return; }
+    // Terminal frame — drop the waiter.
+    this._waiters.delete(msg.request_id);
+    if (status === 'success') { w.onSuccess(msg); }
+    else { w.onFailure(msg.failure_reason || 'failure'); }
+  }
+}
+
 // ===== Provisioning client =====
 class ProvisioningClient {
   constructor(transport){
@@ -868,12 +1186,27 @@ class ProvisioningClient {
     this.waiters.delete(seq);
     clearTimeout(w.timeoutId);
     if (op === OP.Error) {
-      const m = body instanceof Map ? body : new Map();
-      const err = new Error(m.get(EK.Message) || 'Provisioning error');
-      err.code = m.get(EK.Code) ?? 99;
-      err.codeName = ERR_NAMES[err.code] || 'Unknown';
-      err.ns = m.get(EK.Namespace);
-      err.field = m.get(EK.Field);
+      // Defensive against decoders that hand us a plain Object instead of a
+      // Map for int-keyed msgpack maps. Some JS msgpack libs surface int keys
+      // as Map entries, others coerce to string-keyed Object — handle both.
+      const getF = (key) => {
+        if (body instanceof Map) return body.get(key);
+        if (body && typeof body === 'object') {
+          if (key in body) return body[key];
+          const skey = String(key);
+          if (skey in body) return body[skey];
+        }
+        return undefined;
+      };
+      const msg = getF(EK.Message) || 'Provisioning error';
+      const code = getF(EK.Code) ?? 99;
+      const codeName = ERR_NAMES[code] || 'Unknown';
+      const err = new Error(`${msg} (code ${code} ${codeName})`);
+      err.code = code;
+      err.codeName = codeName;
+      err.message_raw = msg;
+      err.ns = getF(EK.Namespace);
+      err.field = getF(EK.Field);
       w.reject(err);
     } else {
       w.resolve({ op, body });
@@ -888,7 +1221,12 @@ class ProvisioningClient {
     p.int(seq);
     if (has) packPayload(p);
     const frame = kissEncode(CMD_PROVISION_REQ, p.result());
-    const timeout = (timeoutMs != null) ? timeoutMs : 5000;
+    // Per-call timeout wins; otherwise the transport's advertised default
+    // (RnsTransport publishes a longer one because LoRa Resource transfers
+    // can take 30+ seconds); final fallback is the snappy 5s default suited
+    // to Serial / BLE / WebSocket.
+    const transportDefault = (this.t && typeof this.t.defaultRequestTimeoutMs === 'number') ? this.t.defaultRequestTimeoutMs : null;
+    const timeout = (timeoutMs != null) ? timeoutMs : (transportDefault != null ? transportDefault : 5000);
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.waiters.delete(seq);
@@ -1311,6 +1649,10 @@ function el(tag, attrs, children){
 const state = {
   transportName: observable('serial'),
   wsUrl: observable('ws://localhost:8080'),
+  rnsUrl: observable('wss://127.0.0.1:9337/ws'),
+  rnsDestHash: observable(''),
+  rnsAspect: observable('rnstransport.remote.management'),
+  rnsAutoIdentify: observable(true),
   conn: observable({ state: 'idle' }),
   info: observable(null),
   schema: observable(null),
@@ -1383,6 +1725,7 @@ function createTransport(name){
   if (name === 'serial') return new SerialTransport();
   if (name === 'ble') return new BLETransport();
   if (name === 'ws') return new WebSocketTransport();
+  if (name === 'rns') return new RnsTransport();
   throw new Error('unknown transport ' + name);
 }
 
@@ -1476,6 +1819,12 @@ async function doConnect(){
     client = new ProvisioningClient(transport);
     wireClient(client);
     if (name === 'ws') await transport.connect(state.wsUrl.get());
+    else if (name === 'rns') await transport.connect({
+      meshchatxUrl: state.rnsUrl.get(),
+      destinationHash: state.rnsDestHash.get(),
+      aspect: state.rnsAspect.get(),
+      autoIdentify: state.rnsAutoIdentify.get(),
+    });
     else await transport.connect();
     await afterConnect();
   } catch (e) {
@@ -1555,6 +1904,18 @@ async function startReconnect(){
         client = new ProvisioningClient(transport);
         wireClient(client);
         await transport.connect(state.wsUrl.get());
+      } else if (lastTransportName === 'rns') {
+        // MeshChatX WS is gone; rebuild and re-open the Link.
+        transport = new RnsTransport();
+        transport.onStatus = onTransportStatus;
+        client = new ProvisioningClient(transport);
+        wireClient(client);
+        await transport.connect({
+          meshchatxUrl: state.rnsUrl.get(),
+          destinationHash: state.rnsDestHash.get(),
+          aspect: state.rnsAspect.get(),
+          autoIdentify: state.rnsAutoIdentify.get(),
+        });
       } else {
         await transport.reconnect();
         // Serial/BLE reuse the same client instance — clear stale waiters and
@@ -2111,6 +2472,25 @@ function buildTopBar(){
   // Mount once; toggle visibility in update() so typing doesn't detach the
   // focused input (which would drop focus on every keystroke).
   wsHost.appendChild(wsInput);
+  // RNS-over-MeshChatX config: WS URL + destination hash + aspect + auto-identify.
+  const rnsHost = el('span', { style: { display: 'inline-flex', gap: '4px', alignItems: 'center' } });
+  const rnsUrlInput = el('input', { type: 'text', placeholder: 'ws://host:port/ws', style: { width: '200px' }, title: 'MeshChatX WebSocket URL' });
+  rnsUrlInput.value = state.rnsUrl.get();
+  rnsUrlInput.oninput = (e) => state.rnsUrl.set(e.target.value);
+  const rnsHashInput = el('input', { type: 'text', placeholder: 'destination hash (32 hex)', style: { width: '260px', fontFamily: 'monospace' }, maxlength: '32', title: 'Remote node destination hash (32 hex chars)' });
+  rnsHashInput.value = state.rnsDestHash.get();
+  rnsHashInput.oninput = (e) => state.rnsDestHash.set(e.target.value.trim());
+  const rnsAspectInput = el('input', { type: 'text', placeholder: 'aspect', style: { width: '220px' }, title: 'RNS destination aspect (dot-separated)' });
+  rnsAspectInput.value = state.rnsAspect.get();
+  rnsAspectInput.oninput = (e) => state.rnsAspect.set(e.target.value);
+  const rnsIdentCb = el('input', { type: 'checkbox' });
+  rnsIdentCb.checked = state.rnsAutoIdentify.get();
+  rnsIdentCb.onchange = (e) => state.rnsAutoIdentify.set(e.target.checked);
+  const rnsIdentLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Send local identity on link establishment (required by /provision ALLOW_LIST)' }, [rnsIdentCb, 'authenticate']);
+  rnsHost.appendChild(rnsUrlInput);
+  rnsHost.appendChild(rnsHashInput);
+  rnsHost.appendChild(rnsAspectInput);
+  rnsHost.appendChild(rnsIdentLabel);
   const connectBtn = el('button');
   const disconnectBtn = el('button', null, 'Disconnect');
   const autoCheckbox = el('input', { type: 'checkbox' });
@@ -2118,7 +2498,7 @@ function buildTopBar(){
   autoCheckbox.onchange = (e) => state.autoReconnect.set(e.target.checked);
   const autoLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Reconnect automatically after a reboot to capture early boot logs' }, [autoCheckbox, 'auto-reconnect']);
   const pill = el('span', { class: 'pill' });
-  const opts = [['serial','Serial'], ['ble','Bluetooth'], ['ws','WebSocket']];
+  const opts = [['serial','Serial'], ['ble','Bluetooth'], ['ws','WebSocket'], ['rns','RNS (via MeshChatX)']];
   for (const [v, lbl] of opts) sel.appendChild(el('option', { value: v }, lbl));
   sel.value = state.transportName.get();
   sel.onchange = (e) => state.transportName.set(e.target.value);
@@ -2130,12 +2510,17 @@ function buildTopBar(){
   root.appendChild(el('label', null, 'Transport: '));
   root.appendChild(sel);
   root.appendChild(wsHost);
+  root.appendChild(rnsHost);
   root.appendChild(connectBtn);
   root.appendChild(disconnectBtn);
   root.appendChild(autoLabel);
   root.appendChild(el('span', { class: 'spacer' }));
   root.appendChild(pill);
 
+  // Elapsed-time ticker state for the connecting badge. Declared outside
+  // update() so it survives across calls (it's the same closure each time).
+  let connectingStartedAt = null;
+  let elapsedTimer = null;
   function update(){
     const conn = state.conn.get();
     const tname = state.transportName.get();
@@ -2150,6 +2535,18 @@ function buildTopBar(){
       if (document.activeElement !== wsInput && wsInput.value !== state.wsUrl.get()) wsInput.value = state.wsUrl.get();
       wsInput.disabled = connecting || connected || reconnecting;
     }
+    const showRns = (tname === 'rns');
+    rnsHost.style.display = showRns ? '' : 'none';
+    if (showRns) {
+      if (document.activeElement !== rnsUrlInput && rnsUrlInput.value !== state.rnsUrl.get()) rnsUrlInput.value = state.rnsUrl.get();
+      if (document.activeElement !== rnsHashInput && rnsHashInput.value !== state.rnsDestHash.get()) rnsHashInput.value = state.rnsDestHash.get();
+      if (document.activeElement !== rnsAspectInput && rnsAspectInput.value !== state.rnsAspect.get()) rnsAspectInput.value = state.rnsAspect.get();
+      if (rnsIdentCb.checked !== state.rnsAutoIdentify.get()) rnsIdentCb.checked = state.rnsAutoIdentify.get();
+      rnsUrlInput.disabled = connecting || connected || reconnecting;
+      rnsHashInput.disabled = connecting || connected || reconnecting;
+      rnsAspectInput.disabled = connecting || connected || reconnecting;
+      rnsIdentCb.disabled = connecting || connected || reconnecting;
+    }
     connectBtn.disabled = connecting || connected || reconnecting;
     connectBtn.textContent = connecting ? 'Connecting…' : 'Connect';
     // Disconnect is also the cancel-reconnect button while reconnecting.
@@ -2157,9 +2554,24 @@ function buildTopBar(){
     if (autoCheckbox.checked !== state.autoReconnect.get()) autoCheckbox.checked = state.autoReconnect.get();
     let txt = 'Disconnected', cls = 'st-idle';
     if (reconnecting) { txt = 'Reconnecting…'; cls = 'st-connecting'; }
-    else if (connecting) { txt = 'Connecting…'; cls = 'st-connecting'; }
+    else if (connecting) {
+      // Show the transport-supplied phase label (e.g. "WS connecting",
+      // "WS verifying", "Link connecting", "Finding path"…) plus the elapsed
+      // time so the user has feedback during slow LoRa-paced steps.
+      const label = (conn.info && String(conn.info).trim()) ? conn.info : 'Connecting';
+      if (connectingStartedAt === null) connectingStartedAt = Date.now();
+      if (elapsedTimer === null) elapsedTimer = setInterval(update, 1000);
+      const elapsed = Math.floor((Date.now() - connectingStartedAt) / 1000);
+      txt = label + '… ' + elapsed + 's';
+      cls = 'st-connecting';
+    }
     else if (connected) { txt = 'Connected' + (conn.info ? ` (${conn.info})` : ''); cls = 'st-ok'; }
     else if (conn.state === 'error') { txt = 'Error: ' + (conn.info || ''); cls = 'st-err'; }
+    // Stop the elapsed-time ticker once we leave 'connecting'.
+    if (!connecting && !reconnecting) {
+      connectingStartedAt = null;
+      if (elapsedTimer !== null) { clearInterval(elapsedTimer); elapsedTimer = null; }
+    }
     pill.className = 'pill ' + cls;
     pill.textContent = txt;
   }
@@ -2167,6 +2579,10 @@ function buildTopBar(){
   state.conn.subscribe(update);
   state.transportName.subscribe(update);
   state.wsUrl.subscribe(update);
+  state.rnsUrl.subscribe(update);
+  state.rnsDestHash.subscribe(update);
+  state.rnsAspect.subscribe(update);
+  state.rnsAutoIdentify.subscribe(update);
   state.autoReconnect.subscribe(update);
   state.reconnecting.subscribe(update);
   return root;
