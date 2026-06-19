@@ -10,11 +10,13 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 
+#ifdef HAS_PROVISIONING
+
 #include "Provisioning.h"
 
 //#include "Config.h"
 
-#ifdef HAS_PROVISIONING
+#include <microReticulum/Log.h>
 
 // KISS framing constants. We don't include "Framing.h" because it defines
 // the parser's module-state globals (IN_FRAME, ESCAPE, command, frame_len)
@@ -267,7 +269,7 @@ static void register_provisioning_namespaces() {
         (fint_t)0, (fint_t)0, (fint_t)255,
         [](const Value& v) { implicit_l = (uint8_t)v.as_int(); return true; })
       .on_commit([](Namespace& ns) {
-        printf("[provision] Radio commit\n");
+        //TRACE("[provision] Radio commit\n");
         Value v;
         bool dirty = false;
         if (ns.draft(PROV_RADIO_FREQ, v)) {
@@ -276,27 +278,27 @@ static void register_provisioning_namespaces() {
           dirty = true;
         }
         if (ns.draft(PROV_RADIO_BW, v)) {
-          lora_freq = (uint32_t)v.as_int();
+          lora_bw = (uint32_t)v.as_int();
           ns.clear_draft(PROV_RADIO_BW);
           dirty = true;
         }
         if (ns.draft(PROV_RADIO_SF, v)) {
-          lora_freq = (uint32_t)v.as_int();
+          lora_sf = (uint32_t)v.as_int();
           ns.clear_draft(PROV_RADIO_SF);
           dirty = true;
         }
         if (ns.draft(PROV_RADIO_CR, v)) {
-          lora_freq = (uint32_t)v.as_int();
+          lora_cr = (uint32_t)v.as_int();
           ns.clear_draft(PROV_RADIO_CR);
           dirty = true;
         }
         if (ns.draft(PROV_RADIO_TXP, v)) {
-          lora_freq = (uint32_t)v.as_int();
+          lora_txp = (uint32_t)v.as_int();
           ns.clear_draft(PROV_RADIO_TXP);
           dirty = true;
         }
         if (dirty) {
-          printf("[provision] Writing eeprom\n");
+          //TRACE("[provision] Writing eeprom\n");
           eeprom_conf_save();
         }
       })

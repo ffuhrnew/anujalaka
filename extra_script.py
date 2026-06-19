@@ -82,6 +82,7 @@ def post_upload(source, target, env):
     if ("espressif32" in platform):
         time.sleep(10)
         # device provisioning is incomplete and only currently appropriate for 915MHz T-Beam
+        #device_wipe(env)
         device_provision(env)
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
@@ -89,6 +90,7 @@ def post_upload(source, target, env):
     elif ("nordicnrf52" in platform):
         time.sleep(10)
         # device provisioning is incomplete and only currently appropriate for 915MHz RAK4631
+        #device_wipe(env)
         device_provision(env)
         time.sleep(5)
         firmware_hash(source, env)
