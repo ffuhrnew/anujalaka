@@ -40,14 +40,15 @@
 //
 // NOTE: **NEVER** change these values once they are in production. Only additions can be made.
 // ---------------------------------------------------------------------------
-#define PROV_NS_GENERAL       100
-#define PROV_NS_RADIO         101
-#define PROV_NS_NETWORK       102
-#define PROV_NS_METRICS       103
-#define PROV_NS_METRICS_IFACE 104
-#define PROV_NS_IFACE_LORA    105
-#define PROV_NS_IFACE_UDP     106
-#define PROV_NS_METRICS_DSTS  107
+#define PROV_NS_GENERAL         100
+#define PROV_NS_RADIO           101
+#define PROV_NS_NETWORK         102
+#define PROV_NS_METRICS         103
+#define PROV_NS_METRICS_IFACE   104
+#define PROV_NS_IFACE_LORA      105
+#define PROV_NS_IFACE_UDP       106
+#define PROV_NS_METRICS_ADDRS   107
+#define PROV_NS_METRICS_DEV     108
 
 #define PROV_GENERAL_KISS_LOG        1
 #define PROV_GENERAL_LORA_MODE       2
@@ -60,6 +61,11 @@
 #define PROV_METRICS_PROBE_DST  2
 #define PROV_METRICS_MGMT_DST   3
 #define PROV_METRICS_NOMAD_DST  4
+
+#define PROV_METRICS_DEV_VER    1
+#define PROV_METRICS_DEV_BATV   2
+#define PROV_METRICS_DEV_BATP   3
+#define PROV_METRICS_DEV_BATS   4
 
 #define PROV_METRICS_LORA_FREQ  1
 #define PROV_METRICS_LORA_BW    2
@@ -82,6 +88,11 @@
 #define PROV_RADIO_CR           5
 #define PROV_RADIO_TXP          6
 #define PROV_RADIO_IMPLICIT     7
+
+#define PROV_NET_IP             1
+#define PROV_NET_PORT           2
+#define PROV_NET_SSID           3
+#define PROV_NET_MODE           4
 
 // Set true once Provisioning::Provisioner::begin() has run.
 extern bool provisioning_started;

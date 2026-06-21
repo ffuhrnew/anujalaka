@@ -219,7 +219,9 @@ RNS::Bytes serve_page(
         content = "{\n";
         content << "  \"packets_sent\": " << std::to_string(RNS::Transport::packets_sent()) << ",\n";
         content << "  \"packets_received\": " << std::to_string(RNS::Transport::packets_received()) << ",\n";
-        content << "  \"destinations_added\": " << std::to_string(RNS::Transport::destinations_added()) << ",\n";
+        content << "  \"paths_added\": " << std::to_string(RNS::Transport::paths_added()) << ",\n";
+        content << "  \"paths_updated\": " << std::to_string(RNS::Transport::paths_updated()) << ",\n";
+        content << "  \"paths_failed\": " << std::to_string(RNS::Transport::paths_failed()) << ",\n";
       	content << "}";
       }
       else {

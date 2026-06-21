@@ -204,5 +204,5 @@ Common HATs / wirings are documented in `rnoded.example.conf`, including RAK6421
 - [ ] Add power management and sleep states to extend battery runtime
 - [x] Add build targets for NRF52 boards
 
-Please open an Issue if you have trouble building ior using the API, and feel free to start a new Discussion for anything else.
+Please open an Issue if you have trouble building or using the firmware or daemon, and feel free to start a new Discussion for anything else.
 

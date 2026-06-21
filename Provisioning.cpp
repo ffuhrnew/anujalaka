@@ -62,12 +62,15 @@ extern RNS::Interface udp_interface;
 extern IPAddress wr_device_ip;
 extern uint16_t udp_port;
 extern uint8_t wifi_mode;
-extern char wr_ssid[];
+extern char wr_ssid[33];
 #endif
 extern bool kiss_framed_logs;
 extern bool nomadnet_enabled;
 extern RNS::Destination nomadnet_destination;
 extern char nomadnet_name[64];
+extern float battery_voltage;
+extern float battery_percent;
+extern uint8_t battery_state;
 extern void hard_reset(void);
 extern void eeprom_conf_save();
 
@@ -108,7 +111,7 @@ static void register_provisioning_namespaces() {
 
   // ----- General namespace -----
   auto general = Provisioner::instance()
-    .register_namespace("General", PROV_NS_GENERAL)
+    .register_namespace("RNode General Config", PROV_NS_GENERAL)
       .field_bool("kiss_framed_logs", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, kiss_framed_logs,
         [](const Value& v) { kiss_framed_logs = v.as_bool(); return true; },
         []() { return kiss_framed_logs; });
@@ -118,7 +121,7 @@ static void register_provisioning_namespaces() {
       .field_bool("nomadnet_enabled", PROV_GENERAL_NOMADNET_ENABLE, FF_REBOOT_REQUIRED, nomadnet_enabled,
         [](const Value& v) { nomadnet_enabled = v.as_bool(); return true; },
         []() { return nomadnet_enabled; })
-      .field_string("nomadnet_name", PROV_GENERAL_NOMADNET_NAME, FF_REBOOT_REQUIRED, nomadnet_name, 63,
+      .field_string("nomadnet_name", PROV_GENERAL_NOMADNET_NAME, FF_REBOOT_REQUIRED, nomadnet_name, sizeof(nomadnet_name)-1,
         [](const Value& v) { strncpy(nomadnet_name, v.as_string().c_str(), sizeof(nomadnet_name)); return true; },
         []() { return nomadnet_name; });
 #endif
@@ -197,21 +200,42 @@ static void register_provisioning_namespaces() {
   // interface object reports it has a live implementation (operator bool
   // on RNS::Interface). Compile-time guards remain only where they need
   // to — UDP's externs aren't declared without UDP_TRANSPORT.
-  auto metrics = Provisioner::instance().namespace_("Metrics", PROV_NS_METRICS);
+  auto metrics = Provisioner::instance().register_namespace("RNode General Metrics", PROV_NS_METRICS);
 
-  metrics.namespace_("Destinations", PROV_NS_METRICS_DSTS)
+  metrics.register_namespace("Device", PROV_NS_METRICS_DEV)
+    //.metric_string("transport_identity", PROV_METRICS_DEV_VER, []() { return std::to_string(MAJ_VERS) + "." + std::to_string(MIN_VERS); })
+    .metric_float("battery_voltage", PROV_METRICS_DEV_BATV, []() { return battery_voltage; })
+    .metric_float("battery_percent", PROV_METRICS_DEV_BATP, []() { return battery_percent; })
+/*
+    .metric_string("battery_state", PROV_METRICS_DEV_BATS, []() {
+      switch (battery_state) {
+        case BATTERY_STATE_CHARGING:
+          return "CHARGING";
+        case BATTERY_STATE_CHARGED:
+          return "CHARGED";
+        case BATTERY_STATE_DISCHARGING:
+          return "DISCHARGING";
+        case BATTERY_STATE_UNKNOWN:
+          return "UNKNOWN";
+        return "";
+      }
+    })
+*/
+    .end();
+
+  metrics.register_namespace("Addresses", PROV_NS_METRICS_ADDRS)
     .metric_bytes("transport_identity", PROV_METRICS_TRANS_ID, []() { return RNS::Transport::identity() ? RNS::Transport::identity().hash() : RNS::Bytes{}; })
     .metric_bytes("probe_destination", PROV_METRICS_PROBE_DST, []() { return RNS::Transport::probe_destination() ? RNS::Transport::probe_destination().hash() : RNS::Bytes{}; })
     .metric_bytes("mgmt_destination", PROV_METRICS_MGMT_DST, []() { return RNS::Transport::remote_management_destination() ? RNS::Transport::remote_management_destination().hash() : RNS::Bytes{}; })
     .metric_bytes("nomadnet_destination", PROV_METRICS_NOMAD_DST, []() { return nomadnet_destination ? nomadnet_destination.hash() : RNS::Bytes{}; })
     .end();
 
-  auto metrics_ifaces = metrics.namespace_("Interfaces", PROV_NS_METRICS_IFACE);
+  auto metrics_ifaces = metrics.register_namespace("Interfaces", PROV_NS_METRICS_IFACE);
 #if defined(LORA_TRANSPORT)
   if (lora_interface) {
     metrics_ifaces
-      //.namespace_("LoRa", PROV_NS_IFACE_LORA)
-      .namespace_(lora_interface.name().c_str(), PROV_NS_IFACE_LORA)
+      //.register_namespace("LoRa", PROV_NS_IFACE_LORA)
+      .register_namespace(lora_interface.name().c_str(), PROV_NS_IFACE_LORA)
         .metric_int("frequency", PROV_METRICS_LORA_FREQ, []() { return lora_freq; })
         .metric_int("bandwidth", PROV_METRICS_LORA_BW, []() { return lora_bw; })
         .metric_int("spreading_factor", PROV_METRICS_LORA_SF, []() { return lora_sf; })
@@ -228,8 +252,8 @@ static void register_provisioning_namespaces() {
 #if defined(UDP_TRANSPORT)
   if (udp_interface) {
     metrics_ifaces
-      //.namespace_("UDP", PROV_NS_IFACE_UDP)
-      .namespace_(udp_interface.name().c_str(), PROV_NS_IFACE_LORA)
+      //.register_namespace("UDP", PROV_NS_IFACE_UDP)
+      .register_namespace(udp_interface.name().c_str(), PROV_NS_IFACE_LORA)
         .metric_string("ip_addr", PROV_METRICS_UDP_ADDR, []() { return wr_device_ip.toString().c_str(); })
         .metric_int("udp_port", PROV_METRICS_UDP_PORT, []() { return udp_port; })
         .metric_string("wifi_ssid", PROV_METRICS_WIFI_SSID, []() { return wr_ssid; })
@@ -244,29 +268,29 @@ static void register_provisioning_namespaces() {
   // ----- Radio namespace (DISABLED) -----
   //
   Provisioner::instance()
-    .register_namespace("Radio", PROV_NS_RADIO)
+    .register_namespace("RNode Radio Config", PROV_NS_RADIO)
       //.field_enum("op_mode", PROV_RADIO_OP_MODE, FF_REBOOT_REQUIRED,
       //           (fint_t)MODE_HOST,
       //           std::vector<fint_t>{ (fint_t)MODE_HOST, (fint_t)MODE_TNC },
       //           std::vector<std::string>{ "host", "tnc" },
       //           [](const Value& v) { op_mode = (uint8_t)v.as_int(); return true; })
       .field_int("frequency", PROV_RADIO_FREQ, FF_REBOOT_REQUIRED,
-        (fint_t)0, (fint_t)100000000, (fint_t)1000000000,
+        (fint_t)lora_freq, (fint_t)100000000, (fint_t)1000000000,
         [](const Value& v) { lora_freq = (uint32_t)v.as_int(); return true; })
       .field_int("bandwidth", PROV_RADIO_BW, FF_REBOOT_REQUIRED,
-        (fint_t)0, (fint_t)7800, (fint_t)500000,
+        (fint_t)lora_bw, (fint_t)7800, (fint_t)500000,
         [](const Value& v) { lora_bw = (uint32_t)v.as_int(); return true; })
       .field_int("sf", PROV_RADIO_SF, FF_REBOOT_REQUIRED,
-        (fint_t)0, (fint_t)5, (fint_t)12,
+        (fint_t)lora_sf, (fint_t)5, (fint_t)12,
         [](const Value& v) { lora_sf = (int)v.as_int(); return true; })
       .field_int("cr", PROV_RADIO_CR, FF_REBOOT_REQUIRED,
-        (fint_t)5, (fint_t)5, (fint_t)8,
+        (fint_t)lora_cr, (fint_t)5, (fint_t)8,
         [](const Value& v) { lora_cr = (int)v.as_int(); return true; })
       .field_int("txp", PROV_RADIO_TXP, FF_REBOOT_REQUIRED,
-        (fint_t)0xFF, (fint_t)-9, (fint_t)22,
+        (fint_t)lora_txp, (fint_t)-9, (fint_t)22,
         [](const Value& v) { lora_txp = (int)v.as_int(); return true; })
       .field_int("implicit_l", PROV_RADIO_IMPLICIT, FF_REBOOT_REQUIRED,
-        (fint_t)0, (fint_t)0, (fint_t)255,
+        (fint_t)implicit_l, (fint_t)0, (fint_t)255,
         [](const Value& v) { implicit_l = (uint8_t)v.as_int(); return true; })
       .on_commit([](Namespace& ns) {
         //TRACE("[provision] Radio commit\n");
@@ -274,27 +298,27 @@ static void register_provisioning_namespaces() {
         bool dirty = false;
         if (ns.draft(PROV_RADIO_FREQ, v)) {
           lora_freq = (uint32_t)v.as_int();
-          ns.clear_draft(PROV_RADIO_FREQ);
+          //ns.clear_draft(PROV_RADIO_FREQ);
           dirty = true;
         }
         if (ns.draft(PROV_RADIO_BW, v)) {
           lora_bw = (uint32_t)v.as_int();
-          ns.clear_draft(PROV_RADIO_BW);
+          //ns.clear_draft(PROV_RADIO_BW);
           dirty = true;
         }
         if (ns.draft(PROV_RADIO_SF, v)) {
           lora_sf = (uint32_t)v.as_int();
-          ns.clear_draft(PROV_RADIO_SF);
+          //ns.clear_draft(PROV_RADIO_SF);
           dirty = true;
         }
         if (ns.draft(PROV_RADIO_CR, v)) {
           lora_cr = (uint32_t)v.as_int();
-          ns.clear_draft(PROV_RADIO_CR);
+          //ns.clear_draft(PROV_RADIO_CR);
           dirty = true;
         }
         if (ns.draft(PROV_RADIO_TXP, v)) {
           lora_txp = (uint32_t)v.as_int();
-          ns.clear_draft(PROV_RADIO_TXP);
+          //ns.clear_draft(PROV_RADIO_TXP);
           dirty = true;
         }
         if (dirty) {
@@ -303,6 +327,26 @@ static void register_provisioning_namespaces() {
         }
       })
       .end();
+#endif
+
+#if defined(UDP_TRANSPORT)
+  //if (wifi_mode != WR_WIFI_OFF && udp_interface) {
+    Provisioner::instance()
+      .register_namespace("RNode Network Config", PROV_NS_NETWORK)
+        .field_string("ip_addr", PROV_NET_IP, FF_REBOOT_REQUIRED,
+          wr_device_ip.toString().c_str(), 15,
+          [](const Value& v) { /*wr_device_ip = v.as_string();*/ return true; })
+        .field_int("udp_port", PROV_NET_PORT, FF_REBOOT_REQUIRED,
+          (fint_t)udp_port, (fint_t)1024, (fint_t)65535,
+          [](const Value& v) { udp_port = (uint32_t)v.as_int(); return true; })
+        .field_string("wifi_ssid", PROV_NET_SSID, FF_REBOOT_REQUIRED,
+          wr_ssid, 32,
+          [](const Value& v) { strncpy(wr_ssid, v.as_string().c_str(), sizeof(wr_ssid)); return true; })
+        .field_string("wifi_mode", PROV_NET_MODE, FF_REBOOT_REQUIRED,
+          std::to_string(wifi_mode).c_str(), 0,
+          [](const Value& v) { return true; })
+      .end();
+  //}
 #endif
 
 }
