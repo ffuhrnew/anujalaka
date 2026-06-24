@@ -26,6 +26,7 @@ set -euo pipefail
 mode="strip"
 out_default_rel="Release/console.html"
 out=""
+strip_logfilter=0
 # Optional path to a JSON file produced by a separate schema-dump tool. When
 # provided, the `const BUNDLED_SCHEMA = null;` placeholder in the source is
 # substituted with the file's contents — letting the web console resolve the
@@ -41,9 +42,10 @@ while [[ $# -gt 0 ]]; do
     --minify)   mode="minify"; shift ;;
     --out)      out="$2"; shift 2 ;;
     --bundled-schema) bundled_schema_file="$2"; shift 2 ;;
+    --strip-logfilter) strip_logfilter=1; shift ;;
     -h|--help)
       cat <<EOF
-Usage: $0 [--strip | --minify] [--out PATH] [--bundled-schema FILE]
+Usage: $0 [--strip | --minify] [--out PATH] [--bundled-schema FILE] [--strip-logfilter]
 
   --strip   (default) Comment + whitespace strip; preserves JS identifiers.
   --minify  Full minification + JS identifier mangling via terser.
@@ -53,6 +55,10 @@ Usage: $0 [--strip | --minify] [--out PATH] [--bundled-schema FILE]
             Substitute the BUNDLED_SCHEMA placeholder with the JSON contents
             of FILE (or set BUNDLED_SCHEMA_FILE env var). Lets the console
             skip GetSchema fetches when the device's hash matches.
+  --strip-logfilter
+            Also slice out the LOGFILTER-BEGIN..LOGFILTER-END regions
+            (logs-tab substring + severity filter UI). Off by default; opt in
+            for size-constrained device builds.
 EOF
       exit 0 ;;
     *)
@@ -94,7 +100,14 @@ if ! grep -q "SELFTEST-BEGIN" "$src"; then
   echo "Warning: SELFTEST-BEGIN marker not found in source — self-test block will not be sliced." >&2
   cp "$src" "$tmp_sliced"
 else
-  sed '/SELFTEST-BEGIN/,/SELFTEST-END/d' "$src" > "$tmp_sliced"
+  sed_expr='/SELFTEST-BEGIN/,/SELFTEST-END/d'
+  if [[ "$strip_logfilter" == "1" ]]; then
+    if ! grep -q "LOGFILTER-BEGIN" "$src"; then
+      echo "Warning: --strip-logfilter given but LOGFILTER-BEGIN marker not found." >&2
+    fi
+    sed_expr="$sed_expr;/LOGFILTER-BEGIN/,/LOGFILTER-END/d"
+  fi
+  sed "$sed_expr" "$src" > "$tmp_sliced"
 fi
 
 # ---- optional BUNDLED_SCHEMA substitution ----

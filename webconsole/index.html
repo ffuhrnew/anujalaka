@@ -107,6 +107,10 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .logs { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 12px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel); }
 .log-line { white-space: pre-wrap; word-break: break-all; }
 .follow-pill { position: absolute; bottom: 14px; right: 18px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--accent); color: var(--accent-ink); cursor: pointer; font: inherit; box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
+<!-- LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given -->
+.logs-filter { font: inherit; padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); min-width: 140px; }
+.logs-level { font: inherit; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); }
+<!-- LOGFILTER-END -->
 .notice { padding: 8px 12px; background: rgba(180,131,9,0.12); color: var(--warn); border-radius: 4px; margin-bottom: 12px; }
 .toasts { position: fixed; top: 56px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; pointer-events: none; }
 .toast { padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; box-shadow: 0 2px 12px rgba(0,0,0,0.18); min-width: 220px; max-width: 360px; opacity: 0; transform: translateY(-8px); transition: opacity 0.2s, transform 0.2s; pointer-events: auto; }
@@ -4205,6 +4209,29 @@ let logsContainer = null;
 let logsFollowing = true;
 let logsSavedScrollTop = 0;
 
+// ===== LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given =====
+// Filtering is render-side only: logsBuffer always holds every received line,
+// so clearing/relaxing the filter restores past lines.
+let logsFilterText = '';
+let logsMinLevel = 9;  // 9 = LOG_MEM (all levels visible)
+const LOGFILTER_LVL_MAP = { '!!!':1, 'ERR':2, 'WRN':3, 'NOT':4, 'INF':5, 'VRB':6, 'DBG':7, '---':8, '...':9 };
+function lineLevel(line){
+  const m = line.match(/\[(!!!|ERR|WRN|NOT|INF|VRB|DBG|---|\.\.\.)\]/);
+  return m ? LOGFILTER_LVL_MAP[m[1]] : 5;  // default unprefixed lines to INFO
+}
+function lineMatches(line){
+  if (lineLevel(line) > logsMinLevel) return false;
+  if (logsFilterText && line.toLowerCase().indexOf(logsFilterText) === -1) return false;
+  return true;
+}
+function repaintLogs(){
+  if (!logsContainer) return;
+  while (logsContainer.firstChild) logsContainer.removeChild(logsContainer.firstChild);
+  for (const l of logsBuffer) if (lineMatches(l)) logsContainer.appendChild(el('div', { class: 'log-line' }, l));
+  if (logsFollowing) logsContainer.scrollTop = logsContainer.scrollHeight;
+}
+// ===== LOGFILTER-END =====
+
 function ensureLogsContainer(){
   if (logsContainer) return;
   logsContainer = el('div', { class: 'logs' });
@@ -4212,9 +4239,19 @@ function ensureLogsContainer(){
     logsFollowing = (logsContainer.scrollHeight - logsContainer.scrollTop - logsContainer.clientHeight) < 16;
     if (followPill) followPill.style.display = logsFollowing ? 'none' : '';
   });
-  for (const line of logsBuffer) logsContainer.appendChild(el('div', { class: 'log-line' }, line));
+  for (const line of logsBuffer) {
+    // ===== LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given =====
+    if (!lineMatches(line)) continue;
+    // ===== LOGFILTER-END =====
+    logsContainer.appendChild(el('div', { class: 'log-line' }, line));
+  }
   logsListeners.add((newLines) => {
-    for (const l of newLines) logsContainer.appendChild(el('div', { class: 'log-line' }, l));
+    for (const l of newLines) {
+      // ===== LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given =====
+      if (!lineMatches(l)) continue;
+      // ===== LOGFILTER-END =====
+      logsContainer.appendChild(el('div', { class: 'log-line' }, l));
+    }
     while (logsContainer.childNodes.length > 1000) logsContainer.removeChild(logsContainer.firstChild);
     if (logsFollowing && logsContainer.isConnected) logsContainer.scrollTop = logsContainer.scrollHeight;
   });
@@ -4238,6 +4275,18 @@ function buildLogsTab(){
     el('button', { onclick: clearLogs, title: 'Clear the log viewer (does not affect the device)' }, 'Clear'),
     el('span', { class: 'spacer' }),
   ]);
+  // ===== LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given =====
+  const filterInput = el('input', { type: 'search', placeholder: 'Filter…', class: 'logs-filter', value: logsFilterText,
+    title: 'Substring filter (case-insensitive). Affects display only — all received lines stay buffered.',
+    oninput: (e) => { logsFilterText = e.target.value.toLowerCase(); repaintLogs(); } });
+  const levelOpts = [['1','Critical'],['2','Error'],['3','Warning'],['4','Notice'],['5','Info'],['6','Verbose'],['7','Debug'],['8','Trace'],['9','All']];
+  const levelSelect = el('select', { class: 'logs-level',
+    title: 'Show lines at or above this severity. Unprefixed lines treated as Info.',
+    onchange: (e) => { logsMinLevel = +e.target.value; repaintLogs(); } },
+    levelOpts.map(([v,t]) => el('option', { value: v, ...(+v === logsMinLevel ? { selected: true } : {}) }, t)));
+  toolbar.insertBefore(filterInput, toolbar.lastChild);
+  toolbar.insertBefore(levelSelect, toolbar.lastChild);
+  // ===== LOGFILTER-END =====
   followPill = el('button', { class: 'follow-pill', style: { display: logsFollowing ? 'none' : '' }, onclick: () => {
     logsFollowing = true; followPill.style.display = 'none';
     logsContainer.scrollTop = logsContainer.scrollHeight;
