@@ -1345,9 +1345,18 @@ function heatshrinkDecode(input){
       // ranges 1..(2^lookahead_bits - 1) → real_length 2..(2^lb).
       const offset = offRaw + 1;
       const length = lenRaw + 1;
+      // The C encoder/decoder both pre-zero a (1<<HS_WINDOW_BITS) byte
+      // sliding window (memset in heatshrink_{en,de}coder.c::reset), and
+      // the encoder is allowed to emit backrefs that point into that
+      // zero region — i.e., "before" any byte has actually been emitted.
+      // Treat negative indices as that virtual zero source rather than
+      // bailing; bailing silently truncates every stream that compresses
+      // an early zero run (common for msgpack float64 metrics).
       const start = out.length - offset;
-      if (start < 0) break;  // malformed input — bail rather than wrap
-      for (let i = 0; i < length; i++) out.push(out[start + i]);
+      for (let i = 0; i < length; i++) {
+        const idx = start + i;
+        out.push(idx < 0 ? 0 : out[idx]);
+      }
     }
   }
   return new Uint8Array(out);
