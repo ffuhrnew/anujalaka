@@ -295,11 +295,11 @@ static void register_provisioning_namespaces() {
         (fint_t)implicit_l, (fint_t)0, (fint_t)255,
         [](const Value& v) { implicit_l = (uint8_t)v.as_int(); return true; })
       .field_float("ST Airtime Limit", PROV_RADIO_STAL, FF_LIVE_APPLY,
-        (ffloat_t)st_airtime_limit, (fint_t)0, (fint_t)1.0,
-        [](const Value& v) { st_airtime_limit = (uint32_t)v.as_float(); return true; })
+        (ffloat_t)st_airtime_limit, (ffloat_t)0, (ffloat_t)1.0,
+        [](const Value& v) { st_airtime_limit = (float)v.as_float(); return true; })
       .field_float("LT Airtime Limit", PROV_RADIO_LTAL, FF_LIVE_APPLY,
-        (ffloat_t)lt_airtime_limit, (fint_t)0, (fint_t)1.0,
-        [](const Value& v) { lt_airtime_limit = (uint32_t)v.as_float(); return true; })
+        (ffloat_t)lt_airtime_limit, (ffloat_t)0, (ffloat_t)1.0,
+        [](const Value& v) { lt_airtime_limit = (float)v.as_float(); return true; })
       .on_commit([](Namespace& ns) {
         //TRACE("[provision] Radio commit\n");
         Value v;
