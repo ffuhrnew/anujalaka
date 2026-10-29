@@ -2674,6 +2674,25 @@ void loop() {
       ERRORF("RNS loop failed: %s", e.what());
     }
   }
+#ifdef URTN_STATS_PAGES
+  // Announce the NomadNet site periodically (every 2 h, like the management
+  // announce in Transport::jobs). The startup announce alone expires after the
+  // path lifetime, so a long-running node would otherwise become invisible.
+  {
+    static uint32_t last_nomadnet_announce = 0;
+    const uint32_t NOMADNET_ANNOUNCE_INTERVAL_MS = 7200UL * 1000UL;
+    if (reticulum && nomadnet_enabled && nomadnet_destination &&
+        (uint32_t)(millis() - last_nomadnet_announce) >= NOMADNET_ANNOUNCE_INTERVAL_MS) {
+      last_nomadnet_announce = millis();
+      try {
+        nomadnet_destination.announce(nomadnet_name);
+      }
+      catch (std::exception& e) {
+        ERRORF("NomadNet announce failed: %s", e.what());
+      }
+    }
+  }
+#endif
 #endif
 
   if (radio_online) {
