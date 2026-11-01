@@ -112,7 +112,6 @@ RNS::Bytes serve_page(
 	}
 
 	VERBOSEF("Serving page %s with category \"%s\" to link <%s> with identity <%s>", path.toString().c_str(), category.c_str(), link_id.toHex().c_str(), (remote_identity ? remote_identity.hash().toHex().c_str() : RNS::Bytes{}.toHex().c_str()));
-	MsgPack::Packer packer;
   {
     RNS::Bytes content;
     if (path == "/page/index.mu") {
@@ -314,7 +313,40 @@ RNS::Bytes serve_page(
     else {
       content = "PATH NOT FOUND\n";
     }
-    packer.packBinary(content.data(), content.size());
+    // CBA/soak-fix: don't route page content through MsgPack::Packer::packBinary().
+    // Packer's internal buffer is a plain std::vector<uint8_t> (std::allocator, not
+    // RNS::Utilities::Memory::ContainerAllocator), and packBinary() fills it with an
+    // unreserved emplace_back() loop -- for a several-hundred-byte page body that
+    // forces repeated whole-buffer reallocations on the general heap (capacity
+    // doubling 1,2,4,...,up to the next power of two >= content.size()), each of
+    // which needs a fresh contiguous block. That heap isn't covered by the
+    // pool/container diagnostics (Utilities::Memory tracks the ContainerAllocator
+    // pool only), so fragmentation there is invisible, and a failed reallocation
+    // doesn't throw a catchable/logged std::bad_alloc the way Packet::unpack's
+    // ContainerAllocator-backed allocations do -- it silently hard-faults the
+    // device instead (observed: soak run 5, 2026-09-15 23:19:32, reset immediately
+    // after "Received 306 byte response from response generator", no bad_alloc/
+    // exception logged, unlike run 4's caught-and-logged OOM crash).
+    //
+    // Build only the small fixed msgpack BIN header by hand, then splice the
+    // payload in via RNS::Bytes::append(), which pre-sizes the target in one shot
+    // and is ContainerAllocator-backed -- exactly the technique Link.cpp's
+    // pack_response_envelope() already uses for the outer response envelope.
+    RNS::Bytes packed;
+    const size_t n = content.size();
+    if (n < 256) {
+      const uint8_t header[2] = {0xC4, (uint8_t)n};
+      packed.append(header, sizeof(header));
+    }
+    else if (n < 65536) {
+      const uint8_t header[3] = {0xC5, (uint8_t)(n >> 8), (uint8_t)(n & 0xFF)};
+      packed.append(header, sizeof(header));
+    }
+    else {
+      const uint8_t header[5] = {0xC6, (uint8_t)(n >> 24), (uint8_t)(n >> 16), (uint8_t)(n >> 8), (uint8_t)(n & 0xFF)};
+      packed.append(header, sizeof(header));
+    }
+    packed.append(content);
+    return packed;
   }
-	return RNS::Bytes(packer.data(), packer.size());
 }

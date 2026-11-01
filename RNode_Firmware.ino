@@ -36,6 +36,10 @@
 
 #include <Arduino.h>
 #include <SPI.h>
+#if defined(NRF52840_XXAA) || defined(NRF52832_XXAA)
+  #include <nrf_sdm.h>
+  #include <nrf_soc.h>
+#endif
 #include "Utilities.h"
 #include "DeviceUID.h"
 #include "Platform.h"
@@ -465,6 +469,10 @@ void dump_filesystem(const char* basepath, uint8_t level = 0, uint8_t max_level 
 }
 #endif
 
+#if BOARD_MODEL == BOARD_SEEED_P1
+  #include "FaultDump.h"
+#endif
+
 void setup() {
 
   // Initialise serial communication
@@ -477,17 +485,26 @@ void setup() {
   install_kiss_stdout();
 
   // CBA Safely wait for serial initialization
-  while (!Serial) {
-    if (millis() > 2000) {
-      break;
-    }
-    delay(10);
-  }
-  // Native USB opens reset the Tracker V2. Keep its startup short enough to
-  // answer rnodeconf's EEPROM request before the utility times out.
-  #if BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
-    delay(2000);
+  bool usb_present = true;
+  #if MCU_VARIANT == MCU_NRF52
+    // No VBUS (running on battery): nobody is going to open the port, so do
+    // not spend four seconds waiting for it. Read the register directly —
+    // the SoftDevice is not enabled yet at this point.
+    usb_present = (NRF_POWER->USBREGSTATUS & POWER_USBREGSTATUS_VBUSDETECT_Msk) != 0;
   #endif
+  if (usb_present) {
+    while (!Serial) {
+      if (millis() > 2000) {
+        break;
+      }
+      delay(10);
+    }
+    // Native USB opens reset the Tracker V2. Keep its startup short enough to
+    // answer rnodeconf's EEPROM request before the utility times out.
+    #if BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
+      delay(2000);
+    #endif
+  }
 
 #ifdef HAS_RNS
   printf("Total SRAM:  %7u bytes\n", RNS::Utilities::Memory::heap_size());
@@ -565,6 +582,22 @@ void setup() {
       pinMode(PIN_LED_BLUE, OUTPUT);
       delay(200);
     #endif
+    #if BOARD_MODEL == BOARD_SEEED_P1
+      // Mirror initVariant() from the Meshtastic/MeshCore P1 variants: GPS rail off
+      // (P1-Pro), QSPI flash deselected, battery divider enabled, LEDs off, button pulled up.
+      pinMode(pin_gps_en, OUTPUT);
+      digitalWrite(pin_gps_en, LOW);
+      pinMode(pin_qspi_cs, OUTPUT);
+      digitalWrite(pin_qspi_cs, HIGH);
+      pinMode(pin_vbat_en, OUTPUT);
+      digitalWrite(pin_vbat_en, LOW);
+      pinMode(pin_led_rx, OUTPUT);
+      digitalWrite(pin_led_rx, LOW);
+      pinMode(pin_led_tx, OUTPUT);
+      digitalWrite(pin_led_tx, LOW);
+      pinMode(pin_btn_usr1, INPUT_PULLUP);
+      delay(10);   // let the SX1262 rail settle, as MeshCore does
+    #endif
 
     if (!eeprom_begin()) { Serial.write("EEPROM initialisation failed.\r\n"); }
   #endif
@@ -599,9 +632,9 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_XIAO_S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_SEEED_P1 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_XIAO_S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
     // Some boards need to wait until the hardware UART is set up before booting
-    // the full firmware. In the case of the RAK4631, RAK3401, and Heltec T114,
+    // the full firmware. In the case of the RAK4631, RAK3401, Seeed P1, and Heltec T114,
     // the line below will wait until a serial connection is actually established
     // with a master. Thus, it is disabled on this platform.
     while (!Serial);
@@ -801,6 +834,33 @@ void setup() {
       bt_init_ran = true;
     #endif
 
+    #if BOARD_MODEL == BOARD_SEEED_P1
+      {
+        // Enable the DC/DC converter (as MeshCore does): ~30 % less supply
+        // current than the LDO, which matters for battery-only nodes during
+        // +22 dBm transmit bursts. Go through the SoftDevice when it owns
+        // the POWER peripheral.
+        uint8_t sd_enabled = 0;
+        sd_softdevice_is_enabled(&sd_enabled);
+        if (sd_enabled) { sd_power_dcdc_mode_set(NRF_POWER_DCDC_ENABLE); }
+        else { NRF_POWER->DCDCEN = 1; }
+
+        // Why did we boot? Shows up in the device console; RESETREAS == 0
+        // means a true power-on or a brown-out.
+        uint32_t rr = readResetReason();
+        printf("[init] reset reason 0x%08lx:%s%s%s%s%s%s\n", (unsigned long)rr,
+               (rr & POWER_RESETREAS_RESETPIN_Msk) ? " reset-pin" : "",
+               (rr & POWER_RESETREAS_DOG_Msk)      ? " watchdog" : "",
+               (rr & POWER_RESETREAS_SREQ_Msk)     ? " soft-reset" : "",
+               (rr & POWER_RESETREAS_LOCKUP_Msk)   ? " cpu-lockup" : "",
+               (rr & POWER_RESETREAS_OFF_Msk)      ? " wake-from-system-off" : "",
+               (rr & POWER_RESETREAS_VBUS_Msk)     ? " vbus-wake" : "");
+        if (rr == 0) printf("[init] reset reason: power-on or brown-out\n");
+        fault_dump_print();
+        printf("[init] usb power %s\n", usb_present ? "present" : "absent (battery)");
+      }
+    #endif
+
     if (console_active) {
       #if HAS_CONSOLE
         console_start();
@@ -951,6 +1011,38 @@ void setup() {
     // If no other initialize attempts succeeded then fallback to internal flash
     if (!init_success) {
       TRACE("Using internal flash...");
+      filesystem = microStore::Adapters::InternalFSFileSystem();
+      if (!filesystem.init()) WARNING("Failed to initialize filesystem!");
+      else TRACE("Initialized internal flash");
+    }
+#elif BOARD_MODEL == BOARD_SEEED_P1
+    // The XIAO nRF52840 Plus carries a 2 MiB P25Q16H on the nRF52840's QSPI
+    // peripheral (pins from variants/seeed_solar_node_p1/variant.h). Using it
+    // for the path table sidesteps InternalFS's 28 KB ceiling.
+    bool init_success = false;
+    {
+      TRACE("Looking for on-board P25Q16H QSPI flash...");
+      static Adafruit_FlashTransport_QSPI qspi_transport(PIN_QSPI_SCK, PIN_QSPI_CS, PIN_QSPI_IO0, PIN_QSPI_IO1, PIN_QSPI_IO2, PIN_QSPI_IO3);
+      static const SPIFlash_Device_t device = P25Q16H;
+      filesystem = microStore::Adapters::FlashFSFileSystem(&device, &qspi_transport);
+      if (filesystem.init()) {
+        TRACE("Initialized P25Q16H QSPI flash");
+        init_success = true;
+        // 2 MiB of flash, but the path store's index lives in RAM: every
+        // record costs a FileStore index entry plus a _path_states entry,
+        // about 140 bytes together. The 500 copied from the RAK modules was
+        // sized for their flash, and measured at 446-479 records here — some
+        // 65 KB of a 140 KB pool, which is the whole 104 KB baseline this node
+        // booted with before it ran out of memory 30 hours later. 150 records
+        // is ~21 KB and still far more than this node routes to; the store is
+        // LRU, so the paths in use are the ones it keeps.
+        RNS::Transport::path_table_maxsize(150);
+        RNS::Transport::path_store_segment_size(24576);
+        RNS::Transport::path_store_segment_count(8);
+      }
+    }
+    if (!init_success) {
+      WARNING("QSPI flash unavailable, falling back to internal flash (28 KB)");
       filesystem = microStore::Adapters::InternalFSFileSystem();
       if (!filesystem.init()) WARNING("Failed to initialize filesystem!");
       else TRACE("Initialized internal flash");
@@ -1408,7 +1500,14 @@ bool startRadio() {
         // PA bias) are stable before the SX126x probes them.
         native_pinmap::assert_radio_enable_pins();
       #endif
-      if (!LoRa->begin(lora_freq)) {
+      // The modem's rail/TCXO can still be settling right after a
+      // battery-only power-up; give it a few attempts before giving up.
+      bool radio_started = false;
+      for (int attempt = 1; attempt <= 5 && !radio_started; attempt++) {
+        radio_started = LoRa->begin(lora_freq);
+        if (!radio_started) { printf("[radio] start failed (attempt %d of 5)\n", attempt); delay(300); }
+      }
+      if (!radio_started) {
         // The radio could not be started.
         // Indicate this failure over both the
         // serial port and with the onboard LEDs
@@ -1417,6 +1516,16 @@ bool startRadio() {
         #endif
         radio_error = true;
         kiss_indicate_error(ERROR_INITRADIO);
+        #if BOARD_MODEL == BOARD_SEEED_P1
+          if (op_mode == MODE_TNC) {
+            // A standalone node has nobody to notice the blink pattern:
+            // flash for three seconds, then restart and try the whole
+            // bring-up again instead of waiting for the 60 s watchdog.
+            printf("[radio] giving up, restarting\n");
+            led_indicate_error(15);
+            hard_reset();
+          }
+        #endif
         led_indicate_error(0);
         return false;
       } else {
@@ -1960,6 +2069,10 @@ void serial_callback(uint8_t sbyte) {
       kiss_indicate_stat_tx();
     } else if (command == CMD_STAT_RSSI) {
       kiss_indicate_stat_rssi();
+    } else if (command == CMD_STAT_BAT) {
+      // Battery state + percentage on request (the frame already existed in
+      // Utilities.h but nothing sent it). Lets hosts read the pack over KISS.
+      kiss_indicate_battery();
     } else if (command == CMD_RADIO_LOCK) {
       update_radio_lock();
       kiss_indicate_radio_lock();

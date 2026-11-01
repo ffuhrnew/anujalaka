@@ -1,0 +1,50 @@
+/* Linker script to configure memory regions. */
+
+SEARCH_DIR(.)
+GROUP(-lgcc -lc -lnosys)
+
+MEMORY
+{
+  FLASH (rx)     : ORIGIN = 0x27000, LENGTH = 0xC3000   /* ScotMesh: the SenseCAP P1 bootloader refuses DFU images over ~798,720 B (accepted 794,804, refused 800,640) */
+
+  /* SRAM required by Softdevice depend on
+   * - Attribute Table Size (Number of Services and Characteristics)
+   * - Vendor UUID count
+   * - Max ATT MTU
+   * - Concurrent connection peripheral + central + secure links
+   * - Event Len, HVN queue, Write CMD queue
+   */ 
+  RAM (rwx) :  ORIGIN = 0x20006000, LENGTH = 0x20040000 - 0x20006000
+}
+
+SECTIONS
+{
+  . = ALIGN(4);
+  .svc_data :
+  {
+    PROVIDE(__start_svc_data = .);
+    KEEP(*(.svc_data))
+    PROVIDE(__stop_svc_data = .);
+  } > RAM
+  
+  .fs_data :
+  {
+    PROVIDE(__start_fs_data = .);
+    KEEP(*(.fs_data))
+    PROVIDE(__stop_fs_data = .);
+  } > RAM
+} INSERT AFTER .data;
+
+/* RAM that the startup code does not zero: the hard-fault record
+   (FaultDump.h) has to survive NVIC_SystemReset. Sits between .bss and
+   .heap, so __HeapBase moves up by its size. */
+SECTIONS
+{
+  .noinit (NOLOAD) :
+  {
+    . = ALIGN(4);
+    KEEP(*(.noinit*))
+  } > RAM
+} INSERT AFTER .bss;
+
+INCLUDE "nrf52_common.ld"
