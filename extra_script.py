@@ -158,6 +158,9 @@ def device_provision(env):
             env.Execute("rnodeconf --product c4 --model cb --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak4631" | "rak4631_local":
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "seeed_solar_node_p1" | "seeed_solar_node_p1_local":
+            # eingetragen als RAK4631-Klasse (868 MHz), damit rnodeconf und Sideband ihn erkennen
+            env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak3401" | "rak3401_local":
             env.Execute("rnodeconf --product 10 --model 14 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "techo" | "techo_local":
