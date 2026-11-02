@@ -32,6 +32,7 @@
 #include <string>
 
 extern RNS::Interface lora_interface;
+extern char boot_reset_reason[40];
 #if HAS_WIFI && defined(UDP_TRANSPORT)
 extern RNS::Interface udp_interface;
 extern IPAddress wr_device_ip;
@@ -125,6 +126,7 @@ RNS::Bytes serve_page(
       content << "`!`[• Object Stores`:/page/stack.mu`c=store]`\n";
       content << "`!`[• Transport Metrics`:/page/stack.mu`c=metrics]`\n";
       content << ">> Device\n";
+      content << "`!`[• Health`:/page/health.mu]`\n";
       content << "`!`[• General`:/page/device.mu`c=general]`\n";
       content << "`!`[• Interface`:/page/device.mu`c=interfaces]`\n";
 #ifdef HAS_BME
@@ -134,6 +136,28 @@ RNS::Bytes serve_page(
 #endif
       if (remote_identity) content << "\n🛡️ Verified identity: " << remote_identity.hash().toHex() << "\n";
       else content << "\n⚠️ Unknown identity. Identity must be provided for access to this site.\n";
+    }
+    else if (path == "/page/health.mu") {
+      // One short page (fits a single LoRa packet): is the node healthy?
+      char line[96];
+      content = "> Health\n";
+      uint32_t up = millis() / 1000UL;
+      snprintf(line, sizeof(line), "Up: %lud %02lu:%02lu:%02lu\n", (unsigned long)(up / 86400UL), (unsigned long)((up / 3600UL) % 24UL), (unsigned long)((up / 60UL) % 60UL), (unsigned long)(up % 60UL));
+      content << line;
+      snprintf(line, sizeof(line), "Start: %s\n", boot_reset_reason); content << line;
+      snprintf(line, sizeof(line), "RAM free: %u KB, flash free: %u KB\n", (unsigned)(RNS::Utilities::Memory::heap_available() / 1024), (unsigned)(RNS::Utilities::OS::storage_available() / 1024));
+      content << line;
+      if (battery_installed) {
+        snprintf(line, sizeof(line), "Battery: %u %%, %.2f V\n", (unsigned)battery_percent, battery_voltage); content << line;
+      }
+      if (lora_interface) {
+        snprintf(line, sizeof(line), "Radio: noise %d, last %d dBm / %d dB\n", (int)noise_floor, (int)last_rssi, (int)((int8_t)last_snr_raw) / 4); content << line;
+        snprintf(line, sizeof(line), "Airtime: %.1f %% now, %.1f %% avg\n", airtime * 100, longterm_airtime * 100); content << line;
+        snprintf(line, sizeof(line), "Packets: rx %lu, tx %lu\n", (unsigned long)lora_interface.rx(), (unsigned long)lora_interface.tx()); content << line;
+      }
+      snprintf(line, sizeof(line), "Paths %u/%u, announces %u\nKnown %u, links %u\n", (unsigned)RNS::Transport::new_path_table().size(), (unsigned)RNS::Transport::path_table_maxsize(),
+        (unsigned)RNS::Transport::announce_table().size(), (unsigned)RNS::Identity::known_destinations().size(), (unsigned)RNS::Transport::active_links().size());
+      content << line;
     }
     else if (path == "/page/stack.mu") {
   	  if (category == "heap") {

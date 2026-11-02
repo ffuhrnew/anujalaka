@@ -43,6 +43,7 @@
 // Update window (nRF52): see ota_* handling in setup()/loop()
 #define OTA_MAGIC      0x5D
 #define OTA_WINDOW_MS  (20UL*60UL*1000UL)
+char boot_reset_reason[40] = "n/a";
 bool ota_window = false;
 volatile bool ota_request = false;
 unsigned long ota_started_ms = 0;
@@ -872,6 +873,13 @@ void setup() {
                (rr & POWER_RESETREAS_OFF_Msk)      ? " wake-from-system-off" : "",
                (rr & POWER_RESETREAS_VBUS_Msk)     ? " vbus-wake" : "");
         if (rr == 0) printf("[init] reset reason: power-on or brown-out\n");
+        snprintf(boot_reset_reason, sizeof(boot_reset_reason), "%s",
+                 rr == 0 ? "power-on / brown-out" :
+                 (rr & POWER_RESETREAS_DOG_Msk) ? "watchdog" :
+                 (rr & POWER_RESETREAS_LOCKUP_Msk) ? "cpu lockup" :
+                 (rr & POWER_RESETREAS_SREQ_Msk) ? "software restart" :
+                 (rr & POWER_RESETREAS_RESETPIN_Msk) ? "reset button" :
+                 (rr & POWER_RESETREAS_VBUS_Msk) ? "usb plugged in" : "other");
         fault_dump_print();
         printf("[init] usb power %s\n", usb_present ? "present" : "absent (battery)");
       }
@@ -1235,6 +1243,7 @@ printf("[init] op_mode: %U\n", op_mode);
         // node's default policy.
         //nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        nomadnet_destination.register_request_handler("/page/health.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
 #ifdef HAS_BME
