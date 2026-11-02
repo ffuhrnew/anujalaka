@@ -483,7 +483,7 @@ void dump_filesystem(const char* basepath, uint8_t level = 0, uint8_t max_level 
 
 void setup() {
 
-  #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
+  #if MCU_VARIANT == MCU_NRF52 && defined(HAS_OTA_WINDOW)
     ota_window = (NRF_POWER->GPREGRET2 == OTA_MAGIC);
     NRF_POWER->GPREGRET2 = 0;
     ota_started_ms = millis();
@@ -846,7 +846,7 @@ void setup() {
     #if HAS_BLUETOOTH || HAS_BLE == true
       bt_init();
       bt_init_ran = true;
-      #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
+      #if MCU_VARIANT == MCU_NRF52 && defined(HAS_OTA_WINDOW)
         if (ota_window && bt_state == BT_STATE_OFF) bt_start();
       #endif
     #endif
@@ -1010,8 +1010,12 @@ void setup() {
       if (filesystem.init()) {
         TRACE("Initialized RAK15001 flash");
         init_success = true;
-        // Raise path store limits to account for larger external flash size
-        RNS::Transport::path_table_maxsize(500);
+        // Raise path store segment sizes for the larger external flash, but keep the
+        // number of path records at 150: 500 records take ~65 KB of the 128 KB RNS heap
+        // pool (measured on the ScotMesh node with the same pool layout), which is
+        // what ran that node out of memory after ~30 h. The table is LRU, so the
+        // paths in use are the ones it keeps.
+        RNS::Transport::path_table_maxsize(150);
         RNS::Transport::path_store_segment_size(24576);
         RNS::Transport::path_store_segment_count(8);
       }
@@ -1026,8 +1030,12 @@ void setup() {
       if (filesystem.init()) {
         TRACE("Initialized W25Q128 flash");
         init_success = true;
-        // Raise path store limits to account for larger external flash size
-        RNS::Transport::path_table_maxsize(500);
+        // Raise path store segment sizes for the larger external flash, but keep the
+        // number of path records at 150: 500 records take ~65 KB of the 128 KB RNS heap
+        // pool (measured on the ScotMesh node with the same pool layout), which is
+        // what ran that node out of memory after ~30 h. The table is LRU, so the
+        // paths in use are the ones it keeps.
+        RNS::Transport::path_table_maxsize(150);
         RNS::Transport::path_store_segment_size(24576);
         RNS::Transport::path_store_segment_count(8);
       }
@@ -2788,7 +2796,7 @@ void work_while_waiting() { loop(); }
 
 void loop() {
 
-  #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
+  #if MCU_VARIANT == MCU_NRF52 && defined(HAS_OTA_WINDOW)
     if (ota_window && millis() - ota_started_ms > OTA_WINDOW_MS) {
       eeprom_update(eeprom_addr(ADDR_CONF_SMUP), 0xFF); eeprom_flush();
       hard_reset();   // window over: back to normal operation
