@@ -57,6 +57,7 @@
 #define PROV_GENERAL_NOMADNET_NAME   5
 #define PROV_GENERAL_GPIO0           6
 #define PROV_GENERAL_GPIO1           7
+#define PROV_GENERAL_OTA             8
 
 #define PROV_METRICS_TRANS_ID   1
 #define PROV_METRICS_PROBE_DST  2

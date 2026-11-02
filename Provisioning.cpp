@@ -48,6 +48,11 @@
 // both compile configurations.
 #if defined(LORA_TRANSPORT)
 extern RNS::Interface lora_interface;
+#ifdef HAS_OTA_WINDOW
+extern volatile bool ota_request;
+extern float battery_percent;
+extern float battery_voltage;
+#endif
 extern uint32_t lora_freq;
 extern uint32_t lora_bw;
 extern int lora_sf;
@@ -122,6 +127,13 @@ static void register_provisioning_namespaces() {
       .field_bool("Kiss Framed Logs", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, kiss_framed_logs,
         [](const Value& v) { kiss_framed_logs = v.as_bool(); return true; },
         []() { return kiss_framed_logs; });
+
+#ifdef HAS_OTA_WINDOW
+    general.command_void("Open Update Window", PROV_GENERAL_OTA, []() {
+      if (battery_percent >= 30.0 || battery_voltage < 0.1) { ota_request = true; return true; }
+      return false;
+    });
+#endif
 
 #ifdef URTN_STATS_PAGES
     general

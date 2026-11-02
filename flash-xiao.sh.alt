@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# flash-xiao.sh - EIN XIAO ESP32S3 + Wio-SX1262 komplett löschen und sauber neu aufsetzen
+#
+# Ablauf (jeder Schritt genau einmal):
+#   1. Flash komplett löschen
+#   2. Firmware flashen (einmal)
+#   3. EEPROM provisionieren (868 MHz)
+#   4. Firmware-Hash setzen (ohne erneutes Flashen)
+#   5. Kontrolle
+#
+# Aufruf:  ./flash-xiao.sh                      (Port wird automatisch gefunden, nur EIN Node angesteckt)
+#          ./flash-xiao.sh /dev/cu.usbmodemXXXX
+#          MODEL=de ./flash-xiao.sh             (433 MHz statt 868 MHz)
+
+set -u
+
+DIR="${MR_DIR:-$HOME/microReticulum_Firmware_Build}"
+ENVNAME="seeed_xiao_esp32s3"
+PRODUCT="eb"
+MODEL="${MODEL:-dd}"
+GIVEN_PORT="${1:-}"
+
+die() { echo; echo "FEHLER: $*" >&2; exit 1; }
+
+command -v pio       >/dev/null || die "pio nicht gefunden"
+command -v rnodeconf >/dev/null || die "rnodeconf nicht gefunden"
+cd "$DIR" 2>/dev/null || die "Ordner nicht gefunden: $DIR"
+grep -q "mgmt.announce();" RNode_Firmware.ino || die "Mgmt-Announce-Patch fehlt in RNode_Firmware.ino"
+
+# genau einen usbmodem-Port finden (wartet bis zu 30 s, z.B. nach dem Löschen)
+get_port() {
+  if [ -n "$GIVEN_PORT" ] && [ -e "$GIVEN_PORT" ]; then echo "$GIVEN_PORT"; return; fi
+  local i n p
+  for i in $(seq 1 30); do
+    p=$(ls /dev/cu.usbmodem* 2>/dev/null)
+    n=$(printf '%s\n' "$p" | grep -c .)
+    [ "$n" -eq 1 ] && { echo "$p"; return; }
+    [ "$n" -gt 1 ] && die "Mehrere usbmodem-Ports gefunden. Nur EINEN Node anstecken."
+    sleep 1
+  done
+  die "Kein Node gefunden. Anstecken (Boot-Taste halten) und nochmal."
+}
+
+PORT=$(get_port)
+echo "Node am Port: $PORT  (Modell $MODEL)"
+
+echo; echo ">>> 1/4 Flash löschen"
+pio run -e "$ENVNAME" -t erase --upload-port "$PORT" || die "Löschen fehlgeschlagen"
+sleep 3; PORT=$(get_port)
+
+echo; echo ">>> 2/4 Firmware flashen (Hinweis 'not provisioned' ist jetzt normal)"
+LOG=$(mktemp)
+pio run -e "$ENVNAME" -t upload --upload-port "$PORT" 2>&1 | tee "$LOG"
+[ "${PIPESTATUS[0]}" -eq 0 ] || die "Flashen fehlgeschlagen"
+HASH=$(grep -o "firmware_hash: [0-9a-f]\{64\}" "$LOG" | head -1 | awk '{print $2}')
+rm -f "$LOG"
+[ -n "$HASH" ] || die "Firmware-Hash nicht in der Ausgabe gefunden"
+sleep 3; PORT=$(get_port)
+
+echo; echo ">>> 3/4 EEPROM provisionieren"
+rnodeconf --product "$PRODUCT" --model "$MODEL" --hwrev 1 --rom "$PORT" || die "Provisionieren fehlgeschlagen"
+sleep 3; PORT=$(get_port)
+
+echo; echo ">>> 4/4 Firmware-Hash setzen"
+OUT=$(rnodeconf --firmware-hash "$HASH" "$PORT" 2>&1); echo "$OUT"
+echo "$OUT" | grep -q "Firmware hash set" || die "Firmware-Hash wurde NICHT gesetzt"
+
+sleep 3; PORT=$(get_port)
+echo; echo ">>> Kontrolle"
+rnodeconf "$PORT" -i 2>&1 | grep -Ei "product|model|firmware|hash|signature|provision" || true
+
+echo
+echo "FERTIG: $PORT"
+echo "Jetzt einrichten: Name, 869,525 MHz, 125 kHz, SF 9, CR 5, 22 dBm - dann Commit."

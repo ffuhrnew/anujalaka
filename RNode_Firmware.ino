@@ -40,6 +40,13 @@
   #include <nrf_sdm.h>
   #include <nrf_soc.h>
 #endif
+// Update window (nRF52): see ota_* handling in setup()/loop()
+#define OTA_MAGIC      0x5D
+#define OTA_WINDOW_MS  (20UL*60UL*1000UL)
+bool ota_window = false;
+volatile bool ota_request = false;
+unsigned long ota_started_ms = 0;
+unsigned long ota_request_ms = 0;
 #include "Utilities.h"
 #include "DeviceUID.h"
 #include "Platform.h"
@@ -475,6 +482,12 @@ void dump_filesystem(const char* basepath, uint8_t level = 0, uint8_t max_level 
 
 void setup() {
 
+  #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
+    ota_window = (NRF_POWER->GPREGRET2 == OTA_MAGIC);
+    NRF_POWER->GPREGRET2 = 0;
+    ota_started_ms = millis();
+  #endif
+
   // Initialise serial communication
   memset(serialBuffer, 0, sizeof(serialBuffer));
   fifo_init(&serialFIFO, serialBuffer, CONFIG_UART_BUFFER_SIZE);
@@ -832,6 +845,9 @@ void setup() {
     #if HAS_BLUETOOTH || HAS_BLE == true
       bt_init();
       bt_init_ran = true;
+      #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
+        if (ota_window && bt_state == BT_STATE_OFF) bt_start();
+      #endif
     #endif
 
     #if BOARD_MODEL == BOARD_SEEED_P1
@@ -2762,6 +2778,24 @@ void tx_queue_handler() {
 void work_while_waiting() { loop(); }
 
 void loop() {
+
+  #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
+    if (ota_window && millis() - ota_started_ms > OTA_WINDOW_MS) {
+      eeprom_update(eeprom_addr(ADDR_CONF_SMUP), 0xFF); eeprom_flush();
+      hard_reset();   // window over: back to normal operation
+    }
+    if (ota_request) {
+      if (ota_request_ms == 0) ota_request_ms = millis();
+      else if (millis() - ota_request_ms > 3000) {   // let the provisioning answer go out first
+        ota_request = false;
+        eeprom_update(eeprom_addr(ADDR_CONF_SMUP), SMUP_ACCEPT_BYTE); eeprom_flush();
+        uint8_t sd_en = 0; sd_softdevice_is_enabled(&sd_en);
+        if (sd_en) { sd_power_gpregret_clr(1, 0xFF); sd_power_gpregret_set(1, OTA_MAGIC); }
+        else NRF_POWER->GPREGRET2 = OTA_MAGIC;
+        hard_reset();
+      }
+    }
+  #endif
 
   #if MCU_VARIANT == MCU_NATIVE
     // Deferred-reboot hook: a KISS-driven property change or CMD_RESET in

@@ -1,0 +1,183 @@
+diff --git a/Bluetooth.h b/Bluetooth.h
+index 82edb9d..4035d04 100644
+--- a/Bluetooth.h
++++ b/Bluetooth.h
+@@ -38,6 +38,8 @@
+   BLEUart SerialBT(BLE_RX_BUF);
+   BLEDis  bledis;
+   BLEBas  blebas;
++  BLEDfu  bledfu;
++  bool    bledfu_started = false;
+   bool SerialBT_init = false;
+ #endif
+ 
+@@ -548,7 +550,10 @@ char bt_devname[11];
+   void bt_start() {
+     // Serial.println("BT Start");
+     if (bt_state == BT_STATE_OFF) {
+-      Bluefruit.setName(bt_devname);
++      // Update window: expose the bootloader's DFU service and a clear name
++      if (ota_window && !bledfu_started) { bledfu.begin(); bledfu_started = true; }
++      if (ota_window) { char n[20]; snprintf(n, sizeof(n), "%s DFU", bt_devname); Bluefruit.setName(n); }
++      else Bluefruit.setName(bt_devname);
+       bledis.setManufacturer(BLE_MANUFACTURER);
+       bledis.setModel(BLE_MODEL);
+       // start device information service
+diff --git a/Device.h b/Device.h
+index 44a6a44..b9c5f6b 100644
+--- a/Device.h
++++ b/Device.h
+@@ -241,6 +241,16 @@ void device_validate_partitions() {
+         break;
+       }
+     }
++    #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
++      // An update window was opened by an admin: accept the freshly flashed image once
++      if (!fw_signature_validated && eeprom_read(eeprom_addr(ADDR_CONF_SMUP)) == SMUP_ACCEPT_BYTE) {
++        memcpy(dev_firmware_hash_target, dev_firmware_hash, DEV_HASH_LEN);
++        device_save_firmware_hash();
++        fw_signature_validated = true;
++        eeprom_update(eeprom_addr(ADDR_CONF_SMUP), 0xFF);
++        eeprom_flush();
++      }
++    #endif
+   #endif
+ }
+ 
+diff --git a/Provisioning.cpp b/Provisioning.cpp
+index 38797c6..ee45172 100644
+--- a/Provisioning.cpp
++++ b/Provisioning.cpp
+@@ -48,6 +48,11 @@
+ // both compile configurations.
+ #if defined(LORA_TRANSPORT)
+ extern RNS::Interface lora_interface;
++#ifdef HAS_OTA_WINDOW
++extern volatile bool ota_request;
++extern float battery_percent;
++extern float battery_voltage;
++#endif
+ extern uint32_t lora_freq;
+ extern uint32_t lora_bw;
+ extern int lora_sf;
+@@ -123,6 +128,13 @@ static void register_provisioning_namespaces() {
+         [](const Value& v) { kiss_framed_logs = v.as_bool(); return true; },
+         []() { return kiss_framed_logs; });
+ 
++#ifdef HAS_OTA_WINDOW
++    general.command_void("Open Update Window", PROV_GENERAL_OTA, []() {
++      if (battery_percent >= 30.0 || battery_voltage < 0.1) { ota_request = true; return true; }
++      return false;
++    });
++#endif
++
+ #ifdef URTN_STATS_PAGES
+     general
+       .field_bool("NomadNet Enabled", PROV_GENERAL_NOMADNET_ENABLE, FF_REBOOT_REQUIRED, nomadnet_enabled,
+diff --git a/Provisioning.h b/Provisioning.h
+index e771e44..344ef5c 100644
+--- a/Provisioning.h
++++ b/Provisioning.h
+@@ -57,6 +57,7 @@
+ #define PROV_GENERAL_NOMADNET_NAME   5
+ #define PROV_GENERAL_GPIO0           6
+ #define PROV_GENERAL_GPIO1           7
++#define PROV_GENERAL_OTA             8
+ 
+ #define PROV_METRICS_TRANS_ID   1
+ #define PROV_METRICS_PROBE_DST  2
+diff --git a/RNode_Firmware.ino b/RNode_Firmware.ino
+index bdc1198..ad0f344 100644
+--- a/RNode_Firmware.ino
++++ b/RNode_Firmware.ino
+@@ -40,6 +40,13 @@
+   #include <nrf_sdm.h>
+   #include <nrf_soc.h>
+ #endif
++// Update window (nRF52): see ota_* handling in setup()/loop()
++#define OTA_MAGIC      0x5D
++#define OTA_WINDOW_MS  (20UL*60UL*1000UL)
++bool ota_window = false;
++volatile bool ota_request = false;
++unsigned long ota_started_ms = 0;
++unsigned long ota_request_ms = 0;
+ #include "Utilities.h"
+ #include "DeviceUID.h"
+ #include "Platform.h"
+@@ -475,6 +482,12 @@ void dump_filesystem(const char* basepath, uint8_t level = 0, uint8_t max_level
+ 
+ void setup() {
+ 
++  #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
++    ota_window = (NRF_POWER->GPREGRET2 == OTA_MAGIC);
++    NRF_POWER->GPREGRET2 = 0;
++    ota_started_ms = millis();
++  #endif
++
+   // Initialise serial communication
+   memset(serialBuffer, 0, sizeof(serialBuffer));
+   fifo_init(&serialFIFO, serialBuffer, CONFIG_UART_BUFFER_SIZE);
+@@ -832,6 +845,9 @@ void setup() {
+     #if HAS_BLUETOOTH || HAS_BLE == true
+       bt_init();
+       bt_init_ran = true;
++      #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
++        if (ota_window && bt_state == BT_STATE_OFF) bt_start();
++      #endif
+     #endif
+ 
+     #if BOARD_MODEL == BOARD_SEEED_P1
+@@ -2758,6 +2774,24 @@ void work_while_waiting() { loop(); }
+ 
+ void loop() {
+ 
++  #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
++    if (ota_window && millis() - ota_started_ms > OTA_WINDOW_MS) {
++      eeprom_update(eeprom_addr(ADDR_CONF_SMUP), 0xFF); eeprom_flush();
++      hard_reset();   // window over: back to normal operation
++    }
++    if (ota_request) {
++      if (ota_request_ms == 0) ota_request_ms = millis();
++      else if (millis() - ota_request_ms > 3000) {   // let the provisioning answer go out first
++        ota_request = false;
++        eeprom_update(eeprom_addr(ADDR_CONF_SMUP), SMUP_ACCEPT_BYTE); eeprom_flush();
++        uint8_t sd_en = 0; sd_softdevice_is_enabled(&sd_en);
++        if (sd_en) { sd_power_gpregret_clr(1, 0xFF); sd_power_gpregret_set(1, OTA_MAGIC); }
++        else NRF_POWER->GPREGRET2 = OTA_MAGIC;
++        hard_reset();
++      }
++    }
++  #endif
++
+   #if MCU_VARIANT == MCU_NATIVE
+     // Deferred-reboot hook: a KISS-driven property change or CMD_RESET in
+     // a prior iteration called hard_reset() → native_request_reboot(), which
+diff --git a/ROM.h b/ROM.h
+index c883434..bbdd83e 100644
+--- a/ROM.h
++++ b/ROM.h
+@@ -46,10 +46,12 @@
+   #define ADDR_CONF_DIA  0xB9
+   #define ADDR_CONF_WIFI 0xBA
+   #define ADDR_CONF_WCHN 0xBB
++  #define ADDR_CONF_SMUP 0xBC
+ 
+   #define INFO_LOCK_BYTE 0x73
+   #define CONF_OK_BYTE   0x73
+   #define BT_ENABLE_BYTE 0x73
++  #define SMUP_ACCEPT_BYTE 0x5A
+ 
+   #define EEPROM_RESERVED 200
+   
+diff --git a/platformio.ini b/platformio.ini
+index db32c74..6f2df0c 100644
+--- a/platformio.ini
++++ b/platformio.ini
+@@ -1001,6 +1001,7 @@ build_unflags =
+ build_flags =
+ 	${env:embedded-nrf52-minimal.build_flags}
+ 	-DBOARD_MODEL=BOARD_SEEED_P1
++	-DHAS_OTA_WINDOW
+ 	; FaultDump.h overrides the core's HardFault_Handler (utility/debug.cpp),
+ 	; which is always linked in for dbg_err_str(); the sketch's copy is first.
+ 	-Wl,--allow-multiple-definition

@@ -241,6 +241,16 @@ void device_validate_partitions() {
         break;
       }
     }
+    #if MCU_VARIANT == MCU_NRF52 && BOARD_MODEL == BOARD_SEEED_P1
+      // An update window was opened by an admin: accept the freshly flashed image once
+      if (!fw_signature_validated && eeprom_read(eeprom_addr(ADDR_CONF_SMUP)) == SMUP_ACCEPT_BYTE) {
+        memcpy(dev_firmware_hash_target, dev_firmware_hash, DEV_HASH_LEN);
+        device_save_firmware_hash();
+        fw_signature_validated = true;
+        eeprom_update(eeprom_addr(ADDR_CONF_SMUP), 0xFF);
+        eeprom_flush();
+      }
+    #endif
   #endif
 }
 

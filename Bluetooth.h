@@ -38,6 +38,8 @@
   BLEUart SerialBT(BLE_RX_BUF);
   BLEDis  bledis;
   BLEBas  blebas;
+  BLEDfu  bledfu;
+  bool    bledfu_started = false;
   bool SerialBT_init = false;
 #endif
 
@@ -548,7 +550,10 @@ char bt_devname[11];
   void bt_start() {
     // Serial.println("BT Start");
     if (bt_state == BT_STATE_OFF) {
-      Bluefruit.setName(bt_devname);
+      // Update window: expose the bootloader's DFU service and a clear name
+      if (ota_window && !bledfu_started) { bledfu.begin(); bledfu_started = true; }
+      if (ota_window) { char n[20]; snprintf(n, sizeof(n), "%s DFU", bt_devname); Bluefruit.setName(n); }
+      else Bluefruit.setName(bt_devname);
       bledis.setManufacturer(BLE_MANUFACTURER);
       bledis.setModel(BLE_MODEL);
       // start device information service
