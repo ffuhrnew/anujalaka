@@ -40,6 +40,7 @@
 
 #include <string>
 #include <vector>
+#include "BootInfo.h"
 
 // lora_interface is always declared in RNode_Firmware.ino (constructed
 // with RNS::Type::NONE), even when LORA_TRANSPORT is not defined. Its
@@ -276,6 +277,9 @@ static void register_provisioning_namespaces() {
     //.metric_string("transport_identity", PROV_METRICS_DEV_VER, []() { return std::to_string(MAJ_VERS) + "." + std::to_string(MIN_VERS); })
     .metric_float("Battery Voltage", PROV_METRICS_DEV_BATV, []() { return battery_voltage; })
     .metric_float("Battery Percent", PROV_METRICS_DEV_BATP, []() { return battery_percent; })
+#if defined(NRF52840_XXAA)
+    .metric_string("Bootloader", PROV_METRICS_DEV_BOOT, []() { return bootloader_info(); })
+#endif
 /*
     .metric_string("Battery State", PROV_METRICS_DEV_BATS, []() {
       switch (battery_state) {
