@@ -5,14 +5,14 @@
     },
     "core": "nRF5",
     "cpu": "cortex-m4",
-    "extra_flags": "-DARDUINO_Seeed_XIAO_nRF52840 -DNRF52840_XXAA -DSEEED_SOLAR_NODE_P1",
+    "extra_flags": "-DARDUINO_Seeed_XIAO_nRF52840 -DNRF52840_XXAA -DXIAO_NRF52840",
     "f_cpu": "64000000L",
     "hwids": [
       ["0x2886", "0x0059"]
     ],
     "usb_product": "XIAO-BOOT",
     "mcu": "nrf52840",
-    "variant": "seeed_solar_node_p1",
+    "variant": "xiao_nrf52840",
     "variants_dir": "variants",
     "bsp": {
       "name": "adafruit"
@@ -34,7 +34,7 @@
     "openocd_target": "nrf52.cfg"
   },
   "frameworks": ["arduino"],
-  "name": "Seeed SenseCAP Solar Node P1 (XIAO nRF52840 Plus + Wio-SX1262)",
+  "name": "Seeed XIAO nRF52840 + Wio-SX1262",
   "upload": {
     "maximum_ram_size": 248832,
     "maximum_size": 815104,

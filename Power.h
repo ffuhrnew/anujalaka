@@ -197,7 +197,7 @@ float pmu_temperature = PMU_TEMP_MIN-1;
   bool bat_voltage_dropping = false;
   float bat_delay_v = 0;
   float bat_state_change_v = 0;
-#elif BOARD_MODEL == BOARD_SEEED_P1
+#elif BOARD_MODEL == BOARD_XIAO_NRF52840
   // 4x18650 pack behind a 1M / 512k divider on P0.31 (AIN7), gated by P0.14 (LOW = on).
   // Read at 12 bits against the internal 3.0 V reference, as MeshCore does for this board.
   // P1_VBAT_DIVIDER is the divider ratio (1000k + 512k) / 512k; adjust after a meter check.
@@ -255,7 +255,7 @@ void measure_temperature() {
 }
 
 void measure_battery() {
-  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_HELTEC_TRACKER_V2 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC_T114 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401 || BOARD_MODEL == BOARD_SEEED_P1
+  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_HELTEC_TRACKER_V2 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC_T114 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401 || BOARD_MODEL == BOARD_XIAO_NRF52840
     battery_installed = true;
     #if BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
       battery_indeterminate = false;
@@ -278,7 +278,7 @@ void measure_battery() {
       float battery_measurement = (float)(analogRead(pin_vbat)) * 0.007067;
     #elif BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
       float battery_measurement = (float)(analogRead(pin_vbat)) * 0.005068;
-    #elif BOARD_MODEL == BOARD_SEEED_P1
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
       // 12-bit sample against the 3.0 V internal reference, scaled by the divider
       float battery_measurement = (float)(analogRead(pin_vbat)) * (3.0 / 4096.0) * P1_VBAT_DIVIDER;
     #else
@@ -473,12 +473,12 @@ bool init_pmu() {
     pmu_temp_sensor_ready = true;
   #endif
 
-  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401 || BOARD_MODEL == BOARD_SEEED_P1
+  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401 || BOARD_MODEL == BOARD_XIAO_NRF52840
     pinMode(pin_vbat, INPUT);
     #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
       analogReference(AR_INTERNAL_3_0);
       analogReadResolution(10);
-    #elif BOARD_MODEL == BOARD_SEEED_P1
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
       // The divider is only connected while P0.14 is driven LOW
       pinMode(pin_vbat_en, OUTPUT);
       digitalWrite(pin_vbat_en, LOW);

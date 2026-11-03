@@ -487,7 +487,7 @@ void dump_filesystem(const char* basepath, uint8_t level = 0, uint8_t max_level 
 }
 #endif
 
-#if BOARD_MODEL == BOARD_SEEED_P1
+#if BOARD_MODEL == BOARD_XIAO_NRF52840
   #include "FaultDump.h"
 #endif
 
@@ -606,9 +606,9 @@ void setup() {
       pinMode(PIN_LED_BLUE, OUTPUT);
       delay(200);
     #endif
-    #if BOARD_MODEL == BOARD_SEEED_P1
-      // Mirror initVariant() from the Meshtastic/MeshCore P1 variants: GPS rail off
-      // (P1-Pro), QSPI flash deselected, battery divider enabled, LEDs off, button pulled up.
+    #if BOARD_MODEL == BOARD_XIAO_NRF52840
+      // Mirror initVariant() from the Meshtastic/MeshCore variants of this board: GPS rail off
+      // (Pro variant), QSPI flash deselected, battery divider enabled, LEDs off, button pulled up.
       pinMode(pin_gps_en, OUTPUT);
       digitalWrite(pin_gps_en, LOW);
       pinMode(pin_qspi_cs, OUTPUT);
@@ -656,9 +656,9 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_SEEED_P1 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_XIAO_S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_XIAO_NRF52840 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_XIAO_S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
     // Some boards need to wait until the hardware UART is set up before booting
-    // the full firmware. In the case of the RAK4631, RAK3401, Seeed P1, and Heltec T114,
+    // the full firmware. In the case of the RAK4631, RAK3401, XIAO nRF52840, and Heltec T114,
     // the line below will wait until a serial connection is actually established
     // with a master. Thus, it is disabled on this platform.
     while (!Serial);
@@ -861,7 +861,7 @@ void setup() {
       #endif
     #endif
 
-    #if BOARD_MODEL == BOARD_SEEED_P1
+    #if BOARD_MODEL == BOARD_XIAO_NRF52840
       {
         // Enable the DC/DC converter (as MeshCore does): ~30 % less supply
         // current than the LDO, which matters for battery-only nodes during
@@ -1067,9 +1067,9 @@ void setup() {
       if (!filesystem.init()) WARNING("Failed to initialize filesystem!");
       else TRACE("Initialized internal flash");
     }
-#elif BOARD_MODEL == BOARD_SEEED_P1
+#elif BOARD_MODEL == BOARD_XIAO_NRF52840
     // The XIAO nRF52840 Plus carries a 2 MiB P25Q16H on the nRF52840's QSPI
-    // peripheral (pins from variants/seeed_solar_node_p1/variant.h). Using it
+    // peripheral (pins from variants/xiao_nrf52840/variant.h). Using it
     // for the path table sidesteps InternalFS's 28 KB ceiling.
     bool init_success = false;
     {
@@ -1569,7 +1569,7 @@ bool startRadio() {
         #endif
         radio_error = true;
         kiss_indicate_error(ERROR_INITRADIO);
-        #if BOARD_MODEL == BOARD_SEEED_P1
+        #if BOARD_MODEL == BOARD_XIAO_NRF52840
           if (op_mode == MODE_TNC) {
             // A standalone node has nobody to notice the blink pattern:
             // flash for three seconds, then restart and try the whole

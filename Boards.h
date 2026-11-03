@@ -120,7 +120,7 @@
   #define MODEL_11            0x11 // RAK4631, 433 Mhz
   #define MODEL_12            0x12 // RAK4631, 868 Mhz
   #define BOARD_RAK3401       0x52 // RAK3401 + RAK13302 (nRF52840 + SX1262 + SKY66122 1W FEM)
-  #define BOARD_SEEED_P1      0x53 // Seeed SenseCAP Solar Node P1 (XIAO nRF52840 Plus + Wio-SX1262).
+  #define BOARD_XIAO_NRF52840      0x53 // Seeed XIAO nRF52840 + Wio-SX1262.
                                    // Provisioned as PRODUCT_RAK4631 / MODEL_12 so stock rnodeconf
                                    // recognises it (same MCU, radio and 22 dBm 868 MHz band).
   #define MODEL_13            0x13 // RAK3401 + RAK13302, 433 MHz
@@ -170,7 +170,7 @@
   #endif
 
   #ifndef MODEM
-    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401 || BOARD_MODEL == BOARD_SEEED_P1
+    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401 || BOARD_MODEL == BOARD_XIAO_NRF52840
       #define MODEM SX1262
     #elif BOARD_MODEL == BOARD_GENERIC_NRF52
       #define MODEM SX1262
@@ -918,10 +918,10 @@
       // User Input Button
       const int pin_btn_usr1 = 31;   // AIN1 (WB_A1) on J11 header / connector pin 22
 
-    #elif BOARD_MODEL == BOARD_SEEED_P1
-      // Seeed SenseCAP Solar Node P1: XIAO nRF52840 Plus + Wio-SX1262 in a solar
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+      // Seeed XIAO nRF52840 Plus + Wio-SX1262 in a solar
       // enclosure. RAK4631-class hardware (same MCU, radio and RXEN+DIO2 switch
-      // topology); pins are Arduino numbers from variants/seeed_solar_node_p1.
+      // topology); pins are Arduino numbers from variants/xiao_nrf52840.
       #define HAS_EEPROM false
       #define HAS_DISPLAY false
       #define HAS_BLUETOOTH false
@@ -941,7 +941,7 @@
       #define EEPROM_SIZE 296
       #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
       #define BLE_MANUFACTURER "Seeed Studio"
-      #define BLE_MODEL "SenseCAP Solar Node P1"
+      #define BLE_MODEL "XIAO nRF52840"
       #define OCP_TUNED 0x38   // 140 mA, as MeshCore sets for this module at +22 dBm
 
       // SX1262 on SPI0: SCK P1.13, MISO P1.14, MOSI P1.15
@@ -967,7 +967,7 @@
       const int pin_vbat_en = 19;
 
       // Power rails we must settle early (see setup() in RNode_Firmware.ino)
-      const int pin_gps_en = 18;       // P1.05, L76K on the P1-Pro; kept off
+      const int pin_gps_en = 18;       // P1.05, L76K on the Pro variant; kept off
       const int pin_qspi_cs = 22;      // P0.25, on-board P25Q16H QSPI flash
 
     #elif BOARD_MODEL == BOARD_TECHO

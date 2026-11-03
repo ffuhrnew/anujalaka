@@ -39,7 +39,7 @@
 // SOFTDEVICE_INFO_STRUCT_OFFSET 0x2000 + 8), and that size already counts
 // the MBR, so the field IS the application start: 0x26000 on S140 v6.x
 // boards (RAK4631, T-Echo), 0x27000 on S140 v7.x boards such as the Seeed
-// SenseCAP Solar Node P1. A fixed 0x26000 made the firmware-hash check fail
+// XIAO nRF52840. A fixed 0x26000 made the firmware-hash check fail
 // on every v7 board, which left the node stuck in host mode.
 #define NRF52_SD_SIZE_ADDR    (0x1000 + 0x2000 + 0x08)
 static inline uint32_t nrf52_application_start() {
@@ -157,7 +157,7 @@ void device_save_firmware_hash() {
 }
 
 #if MCU_VARIANT == MCU_NRF52
-#if BOARD_MODEL == BOARD_SEEED_P1
+#if BOARD_MODEL == BOARD_XIAO_NRF52840
 // Seeed's bootloader build ("UF2 Bootloader 0.9.2-OTAFIX2.2-BP1.3") does not
 // leave the flashed image size at IMG_SIZE_START the way the Adafruit
 // bootloader does, so the self-hash covered the wrong span. Take the size

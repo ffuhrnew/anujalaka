@@ -1,4 +1,4 @@
-// Seeed SenseCAP Solar Node P1 pin map (see variant.h for provenance).
+// Seeed XIAO nRF52840 pin map (see variant.h for provenance).
 #include "variant.h"
 #include "wiring_constants.h"
 #include "wiring_digital.h"

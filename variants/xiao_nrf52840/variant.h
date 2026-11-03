@@ -1,7 +1,7 @@
-#ifndef _SEEED_SOLAR_NODE_P1_H_
-#define _SEEED_SOLAR_NODE_P1_H_
+#ifndef _XIAO_NRF52840_H_
+#define _XIAO_NRF52840_H_
 
-// Seeed SenseCAP Solar Node P1 (XIAO nRF52840 Plus + Wio-SX1262).
+// Seeed XIAO nRF52840 + Wio-SX1262.
 // Pin table from MeshCore variants/sensecap_solar (MIT) and cross-checked against
 // Meshtastic variants/nrf52840/seeed_solar_node; the two agree on every pin.
 // Arduino pin numbers below index g_ADigitalPinMap[] in variant.cpp.
