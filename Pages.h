@@ -145,6 +145,24 @@ RNS::Bytes serve_page(
       snprintf(line, sizeof(line), "Up: %lud %02lu:%02lu:%02lu\n", (unsigned long)(up / 86400UL), (unsigned long)((up / 3600UL) % 24UL), (unsigned long)((up / 60UL) % 60UL), (unsigned long)(up % 60UL));
       content << line;
       snprintf(line, sizeof(line), "Start: %s\n", boot_reset_reason); content << line;
+      #if MCU_VARIANT == MCU_NRF52
+      {
+        // Bootloader version string (UF2/Adafruit bootloader, 0xF4000..0xFE000) and SoftDevice id (0x100C)
+        char bl[28] = "n/a";
+        const char* p = (const char*)0xF4000;
+        const char* e = (const char*)0xFE000 - 16;
+        for (; p < e; p++) {
+          if (p[0] == 'U' && memcmp(p, "UF2 Bootloader ", 15) == 0) {
+            size_t n = 0;
+            while (n < 24 && p[n] >= 32 && p[n] < 127) { bl[n] = p[n]; n++; }
+            bl[n] = 0;
+            break;
+          }
+        }
+        snprintf(line, sizeof(line), "Boot: %s, SD 0x%X\n", bl, (unsigned)(*(volatile const uint16_t*)0x100C));
+        content << line;
+      }
+      #endif
       snprintf(line, sizeof(line), "RAM free: %u KB, flash free: %u KB\n", (unsigned)(RNS::Utilities::Memory::heap_available() / 1024), (unsigned)(RNS::Utilities::OS::storage_available() / 1024));
       content << line;
       if (battery_installed) {
