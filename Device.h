@@ -241,14 +241,21 @@ void device_validate_partitions() {
         break;
       }
     }
-    #if MCU_VARIANT == MCU_NRF52 && defined(HAS_OTA_WINDOW)
+    #if (MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_ESP32) && defined(HAS_OTA_WINDOW)
       // An update window was opened by an admin: accept the freshly flashed image once
-      if (!fw_signature_validated && eeprom_read(eeprom_addr(ADDR_CONF_SMUP)) == SMUP_ACCEPT_BYTE) {
+      #if MCU_VARIANT == MCU_ESP32
+        #define SMUP_READ() EEPROM.read(eeprom_addr(ADDR_CONF_SMUP))
+      #else
+        #define SMUP_READ() eeprom_read(eeprom_addr(ADDR_CONF_SMUP))
+      #endif
+      if (!fw_signature_validated && SMUP_READ() == SMUP_ACCEPT_BYTE) {
         memcpy(dev_firmware_hash_target, dev_firmware_hash, DEV_HASH_LEN);
         device_save_firmware_hash();
         fw_signature_validated = true;
         eeprom_update(eeprom_addr(ADDR_CONF_SMUP), 0xFF);
-        eeprom_flush();
+        #if MCU_VARIANT == MCU_NRF52
+          eeprom_flush();
+        #endif
       }
     #endif
   #endif

@@ -52,6 +52,16 @@ unsigned long ota_request_ms = 0;
 #include "DeviceUID.h"
 #include "Platform.h"
 #include "WebSocketConsole.h"
+#if MCU_VARIANT == MCU_ESP32 && defined(HAS_OTA_WINDOW)
+  #include "OtaWifi.h"
+#endif
+#if MCU_VARIANT == MCU_ESP32 && defined(HAS_OTA_WINDOW)
+// Called by OtaWifi.h after a successful upload: accept the new image once, then restart
+void ota_wifi_done(bool ok) {
+  if (ok) eeprom_update(eeprom_addr(ADDR_CONF_SMUP), SMUP_ACCEPT_BYTE);
+  hard_reset();
+}
+#endif
 
 #if MODEM == MODEM_RUNTIME
 #include "native/LoRaFactory.h"
@@ -893,8 +903,18 @@ void setup() {
       #endif
     } else {
       #if HAS_WIFI
-        wifi_mode = EEPROM.read(eeprom_addr(ADDR_CONF_WIFI));
-        if (wifi_mode == WR_WIFI_STA || wifi_mode == WR_WIFI_AP) { wifi_remote_init(); }
+        #if MCU_VARIANT == MCU_ESP32 && defined(HAS_OTA_WINDOW)
+        if (EEPROM.read(eeprom_addr(ADDR_CONF_SMUP)) == OTA_MAGIC) {
+          // update window requested by an admin: single shot, own access point instead of normal WiFi
+          eeprom_update(eeprom_addr(ADDR_CONF_SMUP), 0xFF);
+          ota_window = true; ota_started_ms = millis();
+          ota_wifi_start();
+        } else
+        #endif
+        {
+          wifi_mode = EEPROM.read(eeprom_addr(ADDR_CONF_WIFI));
+          if (wifi_mode == WR_WIFI_STA || wifi_mode == WR_WIFI_AP) { wifi_remote_init(); }
+        }
       #endif
       kiss_indicate_reset();
     }
@@ -2809,6 +2829,21 @@ void loop() {
         uint8_t sd_en = 0; sd_softdevice_is_enabled(&sd_en);
         if (sd_en) { sd_power_gpregret_clr(1, 0xFF); sd_power_gpregret_set(1, OTA_MAGIC); }
         else NRF_POWER->GPREGRET2 = OTA_MAGIC;
+        hard_reset();
+      }
+    }
+  #endif
+
+  #if MCU_VARIANT == MCU_ESP32 && defined(HAS_OTA_WINDOW)
+    if (ota_window) {
+      ota_wifi_service();
+      if (millis() - ota_started_ms > OTA_WINDOW_MS) hard_reset();   // window over
+    }
+    if (ota_request) {
+      if (ota_request_ms == 0) ota_request_ms = millis();
+      else if (millis() - ota_request_ms > 3000) {   // let the provisioning answer go out first
+        ota_request = false;
+        eeprom_update(eeprom_addr(ADDR_CONF_SMUP), OTA_MAGIC);
         hard_reset();
       }
     }
