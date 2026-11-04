@@ -34,6 +34,9 @@
 
 extern RNS::Interface lora_interface;
 extern char boot_reset_reason[40];
+extern volatile bool ota_request;      // defined in RNode_Firmware.ino (used by the update window)
+extern volatile bool reboot_request;   // defined in RNode_Firmware.ino (delayed restart)
+extern char bt_devname[];
 #if HAS_WIFI && defined(UDP_TRANSPORT)
 extern RNS::Interface udp_interface;
 extern IPAddress wr_device_ip;
@@ -128,6 +131,7 @@ RNS::Bytes serve_page(
       content << "`!`[• Transport Metrics`:/page/stack.mu`c=metrics]`\n";
       content << ">> Device\n";
       content << "`!`[• Health`:/page/health.mu]`\n";
+      content << "`!`[• Steuerung`:/page/control.mu]`\n";
       content << "`!`[• General`:/page/device.mu`c=general]`\n";
       content << "`!`[• Interface`:/page/device.mu`c=interfaces]`\n";
 #ifdef HAS_BME
@@ -324,6 +328,49 @@ RNS::Bytes serve_page(
       else {
         content = "CATEGORY NOT FOUND\n";
       }
+    }
+    // ---- Control pages (admin only, two-step: ask, then do). No side effect on the first page. ----
+    else if (path == "/page/control.mu") {
+      content = "> Steuerung\n\n";
+      content << "Nur für verifizierte Admins. Jede Aktion fragt vorher nach.\n\n";
+#ifdef HAS_OTA_WINDOW
+      content << "`!`[• Update-Fenster öffnen`:/page/ota_ask.mu]`\n";
+#endif
+      content << "`!`[• Node neu starten`:/page/reboot_ask.mu]`\n";
+      content << "\n`!`[Zurück`:/page/index.mu]`\n";
+    }
+#ifdef HAS_OTA_WINDOW
+    else if (path == "/page/ota_ask.mu") {
+      content = "> Update-Fenster öffnen?\n\n";
+      content << "Der Node startet neu und ist danach 20 Minuten für ein Update bereit, dann startet er von selbst neu. ";
+      content << "In dieser Zeit ist er im Netz nicht erreichbar.\n\n";
+#if defined(ARDUINO_ARCH_ESP32)
+      content << "Update per WLAN: Netz \"" << bt_devname << " UPDATE\", Seite http://10.0.0.1/\n\n";
+#else
+      content << "Update per Bluetooth: Gerät \"" << bt_devname << " DFU\" in der DFU-App.\n\n";
+#endif
+      content << "`!`[Ja, jetzt öffnen`:/page/ota_go.mu]`\n";
+      content << "`!`[Abbrechen`:/page/control.mu]`\n";
+    }
+    else if (path == "/page/ota_go.mu") {
+      content = "> Update-Fenster\n\n";
+      if (battery_percent >= 30.0 || battery_voltage < 0.1) {
+        ota_request = true;
+        content << "Wird geöffnet. Der Node startet in wenigen Sekunden neu.\n";
+      } else {
+        content << "Nicht geöffnet: Akku unter 30 %.\n";
+      }
+    }
+#endif
+    else if (path == "/page/reboot_ask.mu") {
+      content = "> Node neu starten?\n\n";
+      content << "Der Node ist danach etwa eine Minute nicht erreichbar.\n\n";
+      content << "`!`[Ja, jetzt neu starten`:/page/reboot_go.mu]`\n";
+      content << "`!`[Abbrechen`:/page/control.mu]`\n";
+    }
+    else if (path == "/page/reboot_go.mu") {
+      reboot_request = true;
+      content = "> Neustart\n\nDer Node startet in wenigen Sekunden neu.\n";
     }
 #ifdef HAS_BME
     else if (path == "/page/telemetry.mu") {

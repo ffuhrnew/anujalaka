@@ -46,6 +46,8 @@
 char boot_reset_reason[40] = "n/a";
 bool ota_window = false;
 volatile bool ota_request = false;
+volatile bool reboot_request = false;   // set by the Control pages, handled in loop()
+unsigned long reboot_request_ms = 0;
 unsigned long ota_started_ms = 0;
 unsigned long ota_request_ms = 0;
 #include "Utilities.h"
@@ -1272,6 +1274,13 @@ printf("[init] op_mode: %U\n", op_mode);
         //nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
         nomadnet_destination.register_request_handler("/page/health.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        nomadnet_destination.register_request_handler("/page/control.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        nomadnet_destination.register_request_handler("/page/reboot_ask.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        nomadnet_destination.register_request_handler("/page/reboot_go.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+#ifdef HAS_OTA_WINDOW
+        nomadnet_destination.register_request_handler("/page/ota_ask.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        nomadnet_destination.register_request_handler("/page/ota_go.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+#endif
         nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
 #ifdef HAS_BME
@@ -2815,6 +2824,14 @@ void tx_queue_handler() {
 void work_while_waiting() { loop(); }
 
 void loop() {
+
+  if (reboot_request) {
+    if (reboot_request_ms == 0) reboot_request_ms = millis();
+    else if (millis() - reboot_request_ms > 5000) {   // let the page answer go out first
+      reboot_request = false;
+      hard_reset();
+    }
+  }
 
   #if MCU_VARIANT == MCU_NRF52 && defined(HAS_OTA_WINDOW)
     if (ota_window && millis() - ota_started_ms > OTA_WINDOW_MS) {
