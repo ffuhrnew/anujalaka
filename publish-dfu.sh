@@ -8,11 +8,15 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "FEHLER: ungespeicherte Aenderungen im Quellcode - erst committen"; git status --short --untracked-files=no; exit 1
 fi
 TREE=$(git rev-parse --short 'HEAD^{tree}')
+ONLY="$*"   # Aufruf ohne Argument: alles bauen; sonst nur die genannten Dateien (rak4631.zip xiao_nrf.zip xiao_esp32s3.bin)
+for a in $ONLY; do case "$a" in rak4631.zip|xiao_nrf.zip|xiao_esp32s3.bin) ;; *) echo "FEHLER: unbekannte Datei $a (erlaubt: rak4631.zip xiao_nrf.zip xiao_esp32s3.bin)"; exit 1;; esac; done
+want() { [ -z "$ONLY" ] && return 0; case " $ONLY " in *" $1 "*) return 0;; esac; return 1; }
 STAND="$DEST/STAND.txt"
-{ echo "Stand: $(date '+%d.%m.%Y %H:%M')   Tree: $TREE   Commit: $(git rev-parse --short HEAD)"; } > "$STAND.tmp"
+{ echo "Stand: $(date '+%d.%m.%Y %H:%M')   Tree: $TREE   Commit: $(git rev-parse --short HEAD)${ONLY:+   (nur neu gebaut: $ONLY)}"; } > "$STAND.tmp"
 
 build() {  # env  suchmuster  zielname
   local env="$1" pat="$2" name="$3" start f
+  want "$name" || { grep "^$name " "$STAND" 2>/dev/null | sed 's/$/  (nicht neu gebaut)/' >> "$STAND.tmp"; echo "    uebersprungen $name"; return 0; }
   start=$(date +%s)
   echo ">>> Baue $env"
   pio run -e "$env" -t clean >/dev/null 2>&1; pio run -e "$env" >/tmp/publish-dfu-$env.log 2>&1 || { echo "FEHLER beim Bauen von $env (Log: /tmp/publish-dfu-$env.log)"; exit 1; }
