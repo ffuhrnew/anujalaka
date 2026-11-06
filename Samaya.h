@@ -12,6 +12,10 @@
 #ifndef SAMAYA_H
 #define SAMAYA_H
 
+#include <stdio.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #if defined(HAS_RNS) && defined(ARDUINO)
 
 #include <microReticulum.h>
@@ -32,6 +36,12 @@ namespace samaya {
   static const uint32_t FIRST_DELAY_MS  = 30UL * 1000UL;   // dem Start Zeit lassen (Interface, Pfade)
   static const uint32_t BACKOFF_MIN_S   = 30;
   static const uint32_t BACKOFF_MAX_S   = 900;             // auf LoRa sparsam: hoechstens alle 15 Minuten
+
+  // Ergebnis fuer die Health-Seite. Nur Anzeige, steuert den Ablauf nicht.
+  enum State : uint8_t { ST_OFF = 0, ST_WAITING, ST_AHEAD, ST_SET, ST_INVALID };
+  static uint8_t  sync_state = ST_OFF;      // OFF = kein Schluessel gesetzt
+  static uint64_t last_delta_s = 0;    // Groesse des letzten Zeitsprungs (nur bei ST_SET)
+  static volatile bool sync_request = false;   // von der Steuerungsseite gesetzt, in samaya_loop() bearbeitet
 
   static bool     done = false;        // einmal pro Boot synchronisiert
   static bool     armed = false;
@@ -58,20 +68,65 @@ namespace samaya {
     return a.size() == b.size() && a.size() > 0 && memcmp(a.data(), b.data(), a.size()) == 0;
   }
 
-  // Zeit nur vorwaerts. true, wenn die Uhr verstellt wurde.
-  static bool apply(uint64_t server_ms) {
+  // Zeit nur vorwaerts. true, wenn die Uhr verstellt wurde; delta_ms ist dann die Groesse des Sprungs.
+  static bool apply(uint64_t server_ms, uint64_t& delta_ms) {
     uint64_t now_ms = RNS::Utilities::OS::ltime();
     if (server_ms <= now_ms) return false;
-    RNS::Utilities::OS::setTimeOffset(RNS::Utilities::OS::getTimeOffset() + (server_ms - now_ms));
+    delta_ms = server_ms - now_ms;
+    RNS::Utilities::OS::setTimeOffset(RNS::Utilities::OS::getTimeOffset() + delta_ms);
     SamayaReticulumAccess::save_time();
     return true;
   }
 }
 
+// Fuer die Seiten (Pages.h). Beide Zeilen enden mit Zeilenumbruch.
+static inline void samaya_time_line(char* buf, size_t n) {
+  uint64_t s = RNS::Utilities::OS::ltime() / 1000ULL;
+  if (s < SAMAYA_MIN_VALID) { snprintf(buf, n, "Zeit: nicht gesetzt\n"); return; }   // Uhr zaehlt nur die Laufzeit
+  char t[24];
+  samaya_format_utc(s, t, sizeof(t));
+  snprintf(buf, n, "Zeit: %s UTC\n", t);
+}
+
+static inline void samaya_status_line(char* buf, size_t n) {
+  using namespace samaya;
+  switch (sync_state) {
+    case ST_WAITING: snprintf(buf, n, "Samaya: wartet\n"); break;
+    case ST_AHEAD:   snprintf(buf, n, "Samaya: Zeit gesehen, Uhr schon voraus\n"); break;
+    case ST_SET: {
+      char d[16];
+      samaya_format_delta(last_delta_s, d, sizeof(d));
+      snprintf(buf, n, "Samaya: Uhr gesetzt %s\n", d);
+      break;
+    }
+    case ST_INVALID: snprintf(buf, n, "Samaya: ungültige Daten\n"); break;
+    default:         snprintf(buf, n, "Samaya: aus (kein Schlüssel)\n"); break;
+  }
+}
+
+// true, wenn ein Zeitserver-Schluessel gesetzt ist (nur dann ist ein Abgleich moeglich).
+static inline bool samaya_enabled() { return samaya_time_key.size() == 64; }
+
+// Manueller Abgleich (Steuerungsseite): nur ein Merker, die Arbeit macht samaya_loop().
+static inline void samaya_request_sync() { samaya::sync_request = true; }
+
 // Aus loop() aufrufen, nach reticulum.loop(). Ohne Schluessel oder nach erfolgreichem Sync sofort zurueck.
 static inline void samaya_loop() {
   using namespace samaya;
-  if (done || samaya_time_key.size() != 64) return;
+  if (samaya_time_key.size() != 64) { sync_state = ST_OFF; sync_request = false; return; }
+  if (sync_state == ST_OFF) { sync_state = ST_WAITING; done = false; prepared = false; }   // Schluessel ist (neu) gesetzt
+  if (sync_request) {
+    // Manueller Abgleich: noch einmal von vorn. prepared = false liest die App-Daten im Cache neu ein,
+    // damit nur eine frische Antwort des Servers zaehlt, nicht die vom letzten Mal.
+    sync_request = false;
+    done = false;
+    prepared = false;
+    armed = true;
+    next_ms = millis();
+    backoff_s = BACKOFF_MIN_S;
+    sync_state = ST_WAITING;
+  }
+  if (done) return;
   uint32_t now = millis();
   if (!armed) { armed = true; next_ms = now + FIRST_DELAY_MS; return; }
   if ((int32_t)(now - next_ms) < 0) return;
@@ -93,15 +148,20 @@ static inline void samaya_loop() {
       uint64_t server_ms = 0;
       if (samaya_decode(cur.data(), cur.size(), server_ms)) {
         done = true;
-        if (apply(server_ms)) {
+        uint64_t delta_ms = 0;
+        if (apply(server_ms, delta_ms)) {
+          last_delta_s = delta_ms / 1000ULL;
+          sync_state = ST_SET;
           NOTICEF("Samaya: clock set forward to %llu ms (Unix, UTC)", (unsigned long long)server_ms);
           announce_once();
         }
         else {
+          sync_state = ST_AHEAD;
           NOTICE("Samaya: server time seen, node clock already ahead");
         }
         return;
       }
+      sync_state = ST_INVALID;                               // Antwort da, aber nicht brauchbar; es wird weiter gefragt
     }
     RNS::Transport::request_path(dest_hash);
   }
@@ -117,6 +177,10 @@ static inline void samaya_loop() {
 
 #else
 static inline void samaya_loop() {}
+static inline void samaya_time_line(char* buf, size_t n) { snprintf(buf, n, "Zeit: -\n"); }
+static inline void samaya_status_line(char* buf, size_t n) { snprintf(buf, n, "Samaya: aus\n"); }
+static inline bool samaya_enabled() { return false; }
+static inline void samaya_request_sync() {}
 #endif // HAS_RNS && ARDUINO
 
 #endif // SAMAYA_H

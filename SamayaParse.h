@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #define SAMAYA_PROTOCOL_VERSION 1
 #define SAMAYA_MIN_VALID 1767225600ULL   // 2026-01-01 00:00:00 UTC
@@ -61,6 +62,35 @@ static inline bool samaya_decode(const uint8_t* p, size_t n, uint64_t& server_ms
   if (ms > 999) return false;
   server_ms = secs * 1000ULL + ms;
   return true;
+}
+
+// Unix-Sekunden als "JJJJ-MM-TT hh:mm:ss" (UTC) in buf. Ohne gmtime(), damit es auf dem Rechner testbar ist.
+// Gueltig fuer Zeiten ab 1970.
+static inline void samaya_format_utc(uint64_t unix_s, char* buf, size_t n) {
+  uint64_t days = unix_s / 86400ULL;
+  uint32_t rem = (uint32_t)(unix_s % 86400ULL);
+  // Tage seit 1970-01-01 in Datum (Algorithmus nach Howard Hinnant, civil_from_days)
+  int64_t z = (int64_t)days + 719468;
+  int64_t era = z / 146097;
+  int64_t doe = z - era * 146097;
+  int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  int64_t y = yoe + era * 400;
+  int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  int64_t mp = (5 * doy + 2) / 153;
+  int64_t d = doy - (153 * mp + 2) / 5 + 1;
+  int64_t m = mp < 10 ? mp + 3 : mp - 9;
+  if (m <= 2) y += 1;
+  snprintf(buf, n, "%04d-%02d-%02d %02u:%02u:%02u", (int)y, (int)m, (int)d,
+           (unsigned)(rem / 3600U), (unsigned)((rem / 60U) % 60U), (unsigned)(rem % 60U));
+}
+
+// Zeitsprung kurz lesbar: "+37s", "+5m", "+3h", "+120d". Nach dem Flashen ohne Uhr ist der Sprung
+// Jahrzehnte gross, deshalb wird gerundet auf die groesste passende Einheit.
+static inline void samaya_format_delta(uint64_t delta_s, char* buf, size_t n) {
+  if (delta_s < 120ULL)         snprintf(buf, n, "+%lus", (unsigned long)delta_s);
+  else if (delta_s < 7200ULL)   snprintf(buf, n, "+%lum", (unsigned long)(delta_s / 60ULL));
+  else if (delta_s < 172800ULL) snprintf(buf, n, "+%luh", (unsigned long)(delta_s / 3600ULL));
+  else                          snprintf(buf, n, "+%lud", (unsigned long)(delta_s / 86400ULL));
 }
 
 #endif // SAMAYA_PARSE_H

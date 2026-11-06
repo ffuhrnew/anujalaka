@@ -149,6 +149,8 @@ RNS::Bytes serve_page(
       uint32_t up = millis() / 1000UL;
       snprintf(line, sizeof(line), "Up: %lud %02lu:%02lu:%02lu\n", (unsigned long)(up / 86400UL), (unsigned long)((up / 3600UL) % 24UL), (unsigned long)((up / 60UL) % 60UL), (unsigned long)(up % 60UL));
       content << line;
+      samaya_time_line(line, sizeof(line)); content << line;
+      samaya_status_line(line, sizeof(line)); content << line;
       snprintf(line, sizeof(line), "Start: %s\n", boot_reset_reason); content << line;
       #if defined(NRF52840_XXAA)
       snprintf(line, sizeof(line), "Boot: %s\n", bootloader_info()); content << line;
@@ -336,8 +338,25 @@ RNS::Bytes serve_page(
 #ifdef HAS_OTA_WINDOW
       content << "`!`[• Update-Fenster öffnen`:/page/ota_ask.mu]`\n";
 #endif
+      if (samaya_enabled()) content << "`!`[• Zeit abgleichen`:/page/time_ask.mu]`\n";
       content << "`!`[• Node neu starten`:/page/reboot_ask.mu]`\n";
       content << "\n`!`[Zurück`:/page/index.mu]`\n";
+    }
+    else if (path == "/page/time_ask.mu") {
+      content = "> Zeit abgleichen?\n\n";
+      content << "Der Node fragt den Samaya-Zeitserver nach der Uhrzeit. Die Uhr wird nur vorgestellt, nie zurück. ";
+      content << "Der Node bleibt dabei erreichbar.\n\n";
+      content << "`!`[Ja, jetzt abgleichen`:/page/time_go.mu]`\n";
+      content << "`!`[Abbrechen`:/page/control.mu]`\n";
+    }
+    else if (path == "/page/time_go.mu") {
+      content = "> Zeitabgleich\n\n";
+      if (samaya_enabled()) {
+        samaya_request_sync();
+        content << "Angefordert. Das Ergebnis steht in ein bis zwei Minuten unter Health.\n";
+      } else {
+        content << "Nicht möglich: kein Zeitserver-Schlüssel gesetzt.\n";
+      }
     }
 #ifdef HAS_OTA_WINDOW
     else if (path == "/page/ota_ask.mu") {
