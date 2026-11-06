@@ -54,6 +54,7 @@ extern volatile bool ota_request;
 extern float battery_percent;
 extern float battery_voltage;
 #endif
+extern RNS::Bytes samaya_time_key;
 extern uint32_t lora_freq;
 extern uint32_t lora_bw;
 extern int lora_sf;
@@ -128,6 +129,16 @@ static void register_provisioning_namespaces() {
       .field_bool("Kiss Framed Logs", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, kiss_framed_logs,
         [](const Value& v) { kiss_framed_logs = v.as_bool(); return true; },
         []() { return kiss_framed_logs; });
+
+    // Samaya: Schluessel des Zeitservers. Nur 0 (aus) oder 64 Byte sind gueltig.
+    general.field_bytes("Time Server Key", PROV_GENERAL_TIME_SERVER_KEY, FF_LIVE_APPLY, RNS::Bytes{}, 64,
+      [](const Value& v) {
+        const auto& b = v.as_bytes();
+        if (b.size() != 0 && b.size() != 64) return false;
+        samaya_time_key = b;
+        return true;
+      },
+      []() { return samaya_time_key; });
 
 #ifdef HAS_OTA_WINDOW
     general.command_void("Open Update Window", PROV_GENERAL_OTA, []() {

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Samaya-Client (Zeitabgleich)** — Nodes holen die Unix-Zeit (UTC) vom Samaya-Server und setzen ihre Uhr nur vorwaerts, damit Announces nach Flashen oder Verlust von `time_offset` nicht bis zum Pfadablauf verworfen werden. Neues Provisioning-Feld "Time Server Key" (Namespace General, ID 9, 64 Byte oeffentlicher Schluessel, leer = aus). Pfadanfrage plus Auslesen der App-Daten aus dem Identity-Cache (Announce-Handler werden fuer Pfadantworten nicht aufgerufen). Dateien: `Samaya.h`, `SamayaParse.h`, Rechnertest `tests/samaya_parse_test.cpp`.
+
 ### Changed
 
 - **Provisioning wire format** — reworked the wire protocol for lower LoRa airtime and fewer round-trips. Breaking change from the previous format:

@@ -17,6 +17,7 @@
 #ifdef HAS_RNS
 #include <microReticulum.h>
 #include "Provisioning.h"
+#include "Samaya.h"
 #if defined(LORA_TRANSPORT)
 #include "LoRaInterface.h"
 #endif
@@ -119,6 +120,9 @@ bool kiss_framed_logs = true;
 bool nomadnet_enabled = true;
 RNS::Destination nomadnet_destination = {RNS::Type::NONE};
 char nomadnet_name[64];
+#ifdef HAS_RNS
+RNS::Bytes samaya_time_key;   // Samaya-Server (oeffentlicher Schluessel, 64 Byte); leer = Zeitabgleich aus
+#endif
 
 #if HAS_CONSOLE
   #include "Console.h"
@@ -2890,6 +2894,7 @@ void loop() {
       ERRORF("RNS loop failed: %s", e.what());
     }
   }
+  samaya_loop();
 #ifdef URTN_STATS_PAGES
   // Announce the NomadNet site periodically (every 2 h, like the management
   // announce in Transport::jobs). The startup announce alone expires after the

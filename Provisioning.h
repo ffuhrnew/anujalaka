@@ -58,6 +58,7 @@
 #define PROV_GENERAL_GPIO0           6
 #define PROV_GENERAL_GPIO1           7
 #define PROV_GENERAL_OTA             8
+#define PROV_GENERAL_TIME_SERVER_KEY 9   // Samaya: oeffentlicher Schluessel des Zeitservers (64 Byte, leer = aus)
 
 #define PROV_METRICS_TRANS_ID   1
 #define PROV_METRICS_PROBE_DST  2
