@@ -306,6 +306,7 @@ void on_log(const char* msg, RNS::LogLevel level) {
 
 // CBA receive packet callback
 void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
+  samaya_on_packet(raw);
 #ifdef HAS_SDCARD
   TRACE("Logging receive packet to SD");
   String line = RNS::getTimeString() + String(" recv: ") + String(raw.toHex().c_str()) + "\n";
