@@ -43,6 +43,7 @@ namespace samaya {
   static uint8_t  sync_state = ST_OFF;      // OFF = kein Schluessel gesetzt
   static uint64_t last_delta_s = 0;    // Groesse des letzten Zeitsprungs (nur bei ST_SET)
   static volatile bool sync_request = false;   // von der Steuerungsseite gesetzt, in samaya_loop() bearbeitet
+  static uint32_t requests_sent = 0;   // gesendete Pfadanfragen seit Start bzw. letztem manuellen Abgleich (nur Anzeige)
 
   static bool     done = false;        // einmal pro Boot synchronisiert
   static bool     armed = false;
@@ -96,7 +97,12 @@ static inline void samaya_time_line(char* buf, size_t n) {
 static inline void samaya_status_line(char* buf, size_t n) {
   using namespace samaya;
   switch (sync_state) {
-    case ST_WAITING: snprintf(buf, n, "Samaya: wartet\n"); break;
+    case ST_WAITING: {
+      // Zeigt, ob der Node ueberhaupt fragt und ob schon irgendwelche App-Daten des Servers im Cache liegen.
+      bool data = prepared && RNS::Identity::recall_app_data(dest_hash).size() > 0;
+      snprintf(buf, n, "Samaya: wartet (Anfragen %lu, Daten %s)\n", (unsigned long)requests_sent, data ? "ja" : "nein");
+      break;
+    }
     case ST_AHEAD:   snprintf(buf, n, "Samaya: Zeit gesehen, Uhr schon voraus\n"); break;
     case ST_SET: {
       char d[16];
@@ -153,7 +159,7 @@ static inline void samaya_on_packet(const RNS::Bytes& raw) {
 static inline void samaya_loop() {
   using namespace samaya;
   if (samaya_time_key.size() != 64) { sync_state = ST_OFF; sync_request = false; return; }
-  if (sync_state == ST_OFF) { sync_state = ST_WAITING; done = false; prepared = false; }   // Schluessel ist (neu) gesetzt
+  if (sync_state == ST_OFF) { sync_state = ST_WAITING; done = false; prepared = false; requests_sent = 0; }   // Schluessel ist (neu) gesetzt
   if (sync_request) {
     // Manueller Abgleich: noch einmal von vorn.
     sync_request = false;
@@ -162,6 +168,7 @@ static inline void samaya_loop() {
     armed = true;
     next_ms = millis();
     backoff_s = BACKOFF_MIN_S;
+    requests_sent = 0;
     sync_state = ST_WAITING;
   }
   try {
@@ -197,6 +204,7 @@ static inline void samaya_loop() {
     if (!armed) { armed = true; next_ms = now + FIRST_DELAY_MS; return; }
     if ((int32_t)(now - next_ms) < 0) return;
     RNS::Transport::request_path(dest_hash);
+    requests_sent++;
   }
   catch (const std::bad_alloc&) {
     ERROR("Samaya: out of memory");

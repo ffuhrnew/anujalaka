@@ -168,6 +168,7 @@ RNS::Bytes serve_page(
       snprintf(line, sizeof(line), "Paths %u/%u, announces %u\nKnown %u, links %u\n", (unsigned)RNS::Transport::new_path_table().size(), (unsigned)RNS::Transport::path_table_maxsize(),
         (unsigned)RNS::Transport::announce_table().size(), (unsigned)RNS::Identity::known_destinations().size(), (unsigned)RNS::Transport::active_links().size());
       content << line;
+      content << "\n`!`[Zurück`:/page/index.mu]`\n";
     }
     else if (path == "/page/stack.mu") {
   	  if (category == "heap") {
