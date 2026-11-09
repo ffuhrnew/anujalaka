@@ -11,8 +11,9 @@
 #include <Update.h>
 
 #ifndef OTA_WIFI_PASSWORD
-  #define OTA_WIFI_PASSWORD "CHANGE-ME-OTA"
+  #error "OTA_WIFI_PASSWORD must be set at build time, e.g. PLATFORMIO_BUILD_FLAGS='-DOTA_WIFI_PASSWORD=\"your-password\"' (min. 8 characters)"
 #endif
+static_assert(sizeof(OTA_WIFI_PASSWORD) >= 9, "OTA_WIFI_PASSWORD needs at least 8 characters (WPA2)");
 
 extern char bt_devname[];
 extern void ota_wifi_done(bool ok);

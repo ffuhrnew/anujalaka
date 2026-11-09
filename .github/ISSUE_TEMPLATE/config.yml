@@ -1,11 +1,5 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: ✨ Feature Request or Idea
-    url: https://github.com/markqvist/Reticulum/discussions/new?category=ideas
-    about: Propose and discuss features and ideas
-  - name: 💬 Questions, Help & Discussion
-    about: Ask anything, or get help
-    url: https://github.com/markqvist/Reticulum/discussions/new/choose
-  - name: 📖 Read the Reticulum Manual
+  - name: Reticulum Manual
     url: https://markqvist.github.io/Reticulum/manual/
     about: The complete documentation for Reticulum
