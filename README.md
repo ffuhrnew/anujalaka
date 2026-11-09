@@ -25,10 +25,11 @@ The libraries `microReticulum` and `microStore` (Apache License 2.0) and a few o
 dependencies are pinned in `platformio.ini`.
 
 The ESP32 WiFi update window has **no default password**. Set one at build time
-(at least 8 characters), for example:
+(at least 8 characters). The quotes must be escaped with backslashes, otherwise
+PlatformIO strips them and the compiler fails with `'<word>' was not declared`:
 
 ```
-export PLATFORMIO_BUILD_FLAGS='-DOTA_WIFI_PASSWORD="choose-your-own"'
+export PLATFORMIO_BUILD_FLAGS='-DOTA_WIFI_PASSWORD=\"choose-your-own\"'
 pio run -e seeed_xiao_esp32s3
 ```
 
