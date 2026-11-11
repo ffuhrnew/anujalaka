@@ -25,7 +25,7 @@ jobs:
     name: Build ${{ matrix.env }}
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         env: [wiscore_rak4631, xiao_nrf52840, seeed_xiao_esp32s3]
     steps:
@@ -59,6 +59,7 @@ jobs:
 
   deploy:
     name: Seite veröffentlichen
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:
