@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aṇujālaka Flasher</title>
+<meta name="description" content="Firmware für Aṇujālaka (microReticulum) direkt im Browser auf XIAO ESP32-S3, XIAO nRF52840 und RAK4631 flashen.">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24; --muted: #5b6672; --line: #dde1e6;
+    --accent: #1f6feb; --accent-text: #ffffff; --warn-bg: #fff4d6; --warn-line: #e3b341;
+    --ok: #1a7f37; --err: #cf222e; --log-bg: #0f1419; --log-text: #c9d1d9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1419; --card: #171d24; --text: #e6e9ed; --muted: #98a3af; --line: #2a323c;
+      --accent: #4c9aff; --accent-text: #0b1117; --warn-bg: #3a2f10; --warn-line: #8a6d1c;
+      --ok: #3fb950; --err: #ff7b72; --log-bg: #0a0e12; --log-text: #c9d1d9;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1.15rem; margin: 0 0 12px; }
+  p { margin: 0 0 12px; }
+  .sub { color: var(--muted); margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 16px; }
+  .warn { background: var(--warn-bg); border-color: var(--warn-line); }
+  .hidden { display: none !important; }
+  .choices { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+  .choice { display: block; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+  .choice:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .choice input { margin-right: 8px; }
+  .choice small { display: block; color: var(--muted); margin-left: 24px; }
+  button, .btn { font: inherit; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-text);
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.secondary, .btn.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+  ol.steps { padding-left: 20px; margin: 0 0 12px; }
+  ol.steps li { margin-bottom: 6px; }
+  progress { width: 100%; height: 14px; margin: 4px 0 8px; }
+  pre#log { background: var(--log-bg); color: var(--log-text); border-radius: 8px; padding: 10px; margin: 0;
+    max-height: 260px; overflow: auto; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+  .ok { color: var(--ok); } .err { color: var(--err); }
+  .meta { color: var(--muted); font-size: .9rem; }
+  code { font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; }
+  a { color: var(--accent); }
+  .links { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Aṇujālaka Flasher</h1>
+  <p class="sub">Micro-Network: Reticulum-Node-Firmware (microReticulum) für XIAO ESP32-S3, XIAO nRF52840 und RAK4631. Flashen direkt im Browser, ohne Installation.</p>
+
+  <div id="nosupport" class="card warn hidden">
+    <strong>Dieser Browser kann nicht per USB flashen.</strong>
+    Bitte Chrome oder Edge am Computer verwenden (Web Serial). Firefox und Safari werden nicht unterstützt.
+  </div>
+
+  <div class="card">
+    <h2>1. Board wählen</h2>
+    <div class="choices" id="boards">
+      <label class="choice"><input type="radio" name="board" value="xiao_esp32s3" checked>XIAO ESP32-S3<small>mit Wio-SX1262</small></label>
+      <label class="choice"><input type="radio" name="board" value="xiao_nrf52840">XIAO nRF52840<small>mit Wio-SX1262</small></label>
+      <label class="choice"><input type="radio" name="board" value="rak4631">RAK4631<small>WisBlock, nRF52840</small></label>
+    </div>
+    <p class="meta" id="fwinfo" style="margin-top:12px">Firmware-Stand wird geladen …</p>
+  </div>
+
+  <div class="card">
+    <h2>2. Flashen</h2>
+    <div class="choices" id="modes" style="margin-bottom:12px">
+      <label class="choice"><input type="radio" name="mode" value="update" checked>Update<small>nur Firmware, Einstellungen und Identität bleiben</small></label>
+      <label class="choice"><input type="radio" name="mode" value="full">Neu einrichten<small>neuer oder leerer Node, löscht alles</small></label>
+    </div>
+
+    <div id="steps-esp32">
+      <ol class="steps">
+        <li>Board per USB anstecken. Falls es nicht erkannt wird: <strong>BOOT</strong> gedrückt halten, anstecken, loslassen.</li>
+        <li>Auf „Flashen“ klicken und den Port des Boards wählen.</li>
+      </ol>
+      <div class="row"><button id="btn-flash-esp32">Flashen</button></div>
+    </div>
+
+    <div id="steps-nrf" class="hidden">
+      <ol class="steps">
+        <li>Board per USB anstecken und in den DFU-Modus bringen: Knopf unten klicken (und Port wählen) <em>oder</em> Reset-Taste zweimal schnell drücken.</li>
+        <li>Auf „Flashen“ klicken und den Port des Boards im DFU-Modus wählen. Er ist ein anderer Eintrag als vorher.</li>
+      </ol>
+      <div class="row">
+        <button id="btn-dfu" class="secondary">In DFU-Modus versetzen</button>
+        <button id="btn-flash-nrf">Flashen</button>
+        <a id="btn-uf2" class="btn secondary hidden" href="firmware/xiao_nrf52840.uf2" download>UF2-Datei laden</a>
+      </div>
+      <p class="meta hidden" id="uf2hint">Alternative ohne Browser-Flasher: Reset zweimal drücken, das Laufwerk XIAO-BOOT erscheint, die UF2-Datei darauf ziehen.</p>
+    </div>
+
+    <progress id="progress" max="100" value="0" class="hidden"></progress>
+  </div>
+
+  <div class="card">
+    <h2>3. Nach dem Flashen</h2>
+    <p><strong>Update:</strong> nur Schritt c. Der Firmware-Hash ändert sich mit jeder neuen Firmware und muss danach gesetzt werden.</p>
+    <p><strong>Neu einrichten:</strong> der Reihe nach a, b, c. Jeder Schritt fragt den Port neu ab, weil das Board dazwischen neu startet.</p>
+    <div class="row">
+      <button id="btn-wipe" class="secondary">a. EEPROM leeren</button>
+      <button id="btn-provision" class="secondary">b. EEPROM einrichten</button>
+      <button id="btn-hash">c. Firmware-Hash setzen</button>
+    </div>
+    <p class="meta">Das Leeren dauert bis zu 30 Sekunden. Eine Gerätesignatur wird hier nicht erzeugt (wie im rnode-flasher), <code>rnodeconf</code> kann sie deshalb als nicht bestätigt melden.</p>
+  </div>
+
+  <div class="card">
+    <h2>4. Konfigurieren</h2>
+    <p>Name, Funkparameter, Zugriffsliste und Transport stellst du in der Web-Konsole ein (USB oder Bluetooth). Nach „Neu einrichten“ ist die Identität des Nodes neu.</p>
+    <div class="row"><a class="btn" href="console.html">Web-Konsole öffnen</a></div>
+  </div>
+
+  <div class="card">
+    <h2>Protokoll</h2>
+    <pre id="log">Bereit.</pre>
+  </div>
+
+  <div class="card">
+    <h2>Mehr</h2>
+    <div class="links">
+      <a href="https://github.com/ffuhrnew/anujalaka">Quellcode</a>
+      <a href="https://github.com/ffuhrnew/anujalaka/blob/main/README.md">README</a>
+      <a href="https://github.com/ffuhrnew/anujalaka/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/ffuhrnew/anujalaka/blob/main/docs/Provisioning.md">Provisioning</a>
+      <a href="https://github.com/ffuhrnew/anujalaka/issues">Fehler melden</a>
+    </div>
+    <p class="meta" style="margin-top:12px">GPL-3.0. Der Flasher benutzt Code von
+      <a href="https://github.com/liamcottle/rnode-flasher">liamcottle/rnode-flasher</a> (MIT) und
+      <a href="https://github.com/espressif/esptool-js">esptool-js</a>, siehe <a href="vendor/THIRD-PARTY.md">THIRD-PARTY.md</a>.
+      Die Firmware wird bei jedem Stand von <code>main</code> automatisch gebaut. Flashen geschieht auf eigene Gefahr.</p>
+  </div>
+</main>
+
+<script src="vendor/crypto-js/core.js"></script>
+<script src="vendor/crypto-js/md5.js"></script>
+<script src="vendor/zip.min.js"></script>
+<script src="vendor/rnode.js"></script>
+<script src="vendor/nrf52_dfu_flasher.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

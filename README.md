@@ -19,6 +19,14 @@ See `git log` for details. Highlights:
 - Repeated NomadNet announces, reduced log level for field nodes
 - Helper scripts: `flash-node.sh`, `node_backup.py`, `node_restore.py`, `node_reset.py`, `publish-dfu.sh`
 
+## Web flasher
+
+`site/` holds a browser flasher (Chrome or Edge, Web Serial) for XIAO ESP32-S3, XIAO nRF52840 and RAK4631,
+plus the web console as `console.html`. The workflow `.github/workflows/pages.yml` builds the three firmwares
+on every push to `main` and publishes everything on GitHub Pages
+(once: Settings > Pages > Source = "GitHub Actions"). The optional secret `OTA_WIFI_PASSWORD` sets the
+ESP32 update-window password, otherwise a random one is used per build.
+
 ## Building
 
 The libraries `microReticulum` and `microStore` (Apache License 2.0) and a few other
