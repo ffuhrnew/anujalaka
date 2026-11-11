@@ -66,6 +66,17 @@ void ota_wifi_done(bool ok) {
 }
 #endif
 
+// True if an update window can be opened. On the ESP32 that needs the WiFi password (set at flash or build time).
+#ifdef HAS_OTA_WINDOW
+bool ota_password_available() {
+  #if MCU_VARIANT == MCU_ESP32
+    return ota_wifi_password_ok();
+  #else
+    return true;
+  #endif
+}
+#endif
+
 #if MODEM == MODEM_RUNTIME
 #include "native/LoRaFactory.h"
 #include "native/PinMap.h"
@@ -2863,6 +2874,7 @@ void loop() {
       ota_wifi_service();
       if (millis() - ota_started_ms > OTA_WINDOW_MS) hard_reset();   // window over
     }
+    if (ota_request && !ota_password_available()) ota_request = false;   // no WiFi password set: refuse
     if (ota_request) {
       if (ota_request_ms == 0) ota_request_ms = millis();
       else if (millis() - ota_request_ms > 3000) {   // let the provisioning answer go out first

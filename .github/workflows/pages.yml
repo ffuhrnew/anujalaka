@@ -1,0 +1,90 @@
+name: Flasher-Seite
+
+# Baut die drei Firmwares und veröffentlicht sie zusammen mit der Flasher-Seite (site/)
+# und der Web-Konsole (webconsole/) auf GitHub Pages.
+# Einmalig nötig: Repository > Settings > Pages > Source = "GitHub Actions".
+# Das WLAN-Passwort des ESP32-Update-Fensters wird nicht gebaut: es hat einen leeren Platz in der Firmware,
+# den der Flasher im Browser mit dem Passwort des Nutzers füllt (site/espimage.js).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        env: [wiscore_rak4631, xiao_nrf52840, seeed_xiao_esp32s3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ matrix.env }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ matrix.env }}-
+
+      - name: PlatformIO installieren
+        run: pip install platformio
+
+      - name: Bauen
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Ergebnisse einsammeln
+        run: tools/collect_firmware.sh ${{ matrix.env }} out/firmware
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fw-${{ matrix.env }}
+          path: out/firmware
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Seite veröffentlichen
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fw-*
+          merge-multiple: true
+          path: pages/firmware
+
+      - name: Seite zusammenbauen
+        run: |
+          cp -r site/. pages/
+          cp webconsole/index.html pages/console.html
+          touch pages/.nojekyll
+          python3 tools/make_manifest.py pages/firmware "$GITHUB_SHA"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

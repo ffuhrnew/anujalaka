@@ -19,13 +19,22 @@ See `git log` for details. Highlights:
 - Repeated NomadNet announces, reduced log level for field nodes
 - Helper scripts: `flash-node.sh`, `node_backup.py`, `node_restore.py`, `node_reset.py`, `publish-dfu.sh`
 
+## Web flasher
+
+`site/` holds a browser flasher (Chrome or Edge, Web Serial) for XIAO ESP32-S3, XIAO nRF52840 and RAK4631,
+plus the web console as `console.html`. The workflow `.github/workflows/pages.yml` builds the three firmwares
+on every push to `main` and publishes everything on GitHub Pages
+(once: Settings > Pages > Source = "GitHub Actions"). The published ESP32 firmware has no WiFi update
+password; the flasher writes the one the user types into the image while flashing (`site/espimage.js`).
+Without it the update window stays locked.
+
 ## Building
 
 The libraries `microReticulum` and `microStore` (Apache License 2.0) and a few other
 dependencies are pinned in `platformio.ini`.
 
-The ESP32 WiFi update window has **no default password**. Set one at build time
-(at least 8 characters). The quotes must be escaped with backslashes, otherwise
+The ESP32 WiFi update window has **no default password**. For a local build, set one at build time
+(at least 8 characters; without it the firmware has an empty password slot, see `OtaWifi.h`). The quotes must be escaped with backslashes, otherwise
 PlatformIO strips them and the compiler fails with `'<word>' was not declared`:
 
 ```
