@@ -51,6 +51,7 @@
 extern RNS::Interface lora_interface;
 #ifdef HAS_OTA_WINDOW
 extern volatile bool ota_request;
+extern bool ota_password_available();
 extern float battery_percent;
 extern float battery_voltage;
 #endif
@@ -142,6 +143,7 @@ static void register_provisioning_namespaces() {
 
 #ifdef HAS_OTA_WINDOW
     general.command_void("Open Update Window", PROV_GENERAL_OTA, []() {
+      if (!ota_password_available()) return false;   // ESP32: no update password set at flash time
       if (battery_percent >= 30.0 || battery_voltage < 0.1) { ota_request = true; return true; }
       return false;
     });

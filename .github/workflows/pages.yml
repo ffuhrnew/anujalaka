@@ -3,8 +3,8 @@ name: Flasher-Seite
 # Baut die drei Firmwares und veröffentlicht sie zusammen mit der Flasher-Seite (site/)
 # und der Web-Konsole (webconsole/) auf GitHub Pages.
 # Einmalig nötig: Repository > Settings > Pages > Source = "GitHub Actions".
-# Optional: Secret OTA_WIFI_PASSWORD (mind. 8 Zeichen) für das WLAN-Update-Fenster des ESP32.
-# Ohne Secret wird pro Lauf ein zufälliges Passwort verwendet, das niemand kennt.
+# Das WLAN-Passwort des ESP32-Update-Fensters wird nicht gebaut: es hat einen leeren Platz in der Firmware,
+# den der Flasher im Browser mit dem Passwort des Nutzers füllt (site/espimage.js).
 
 on:
   push:
@@ -43,16 +43,6 @@ jobs:
 
       - name: PlatformIO installieren
         run: pip install platformio
-
-      - name: OTA-Passwort setzen (nur ESP32)
-        if: matrix.env == 'seeed_xiao_esp32s3'
-        env:
-          SECRET_PW: ${{ secrets.OTA_WIFI_PASSWORD }}
-        run: |
-          PW="${SECRET_PW:-$(openssl rand -hex 12)}"
-          echo "::add-mask::$PW"
-          # Die Anführungszeichen müssen mit Backslash maskiert sein, siehe README
-          echo "PLATFORMIO_BUILD_FLAGS=-DOTA_WIFI_PASSWORD=\\\"$PW\\\"" >> "$GITHUB_ENV"
 
       - name: Bauen
         run: pio run -e ${{ matrix.env }}

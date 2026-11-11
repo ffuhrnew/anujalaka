@@ -10,10 +10,29 @@
 #include <WebServer.h>
 #include <Update.h>
 
-#ifndef OTA_WIFI_PASSWORD
-  #error "OTA_WIFI_PASSWORD must be set at build time, e.g. PLATFORMIO_BUILD_FLAGS='-DOTA_WIFI_PASSWORD=\"your-password\"' (min. 8 characters)"
+// There is no default password. It comes from one of two places:
+//  - build time: -DOTA_WIFI_PASSWORD=\"...\" (min. 8 characters), or
+//  - flash time: the web flasher writes the password the user typed into the slot below
+//    (marker + state byte + 64 bytes) and fixes the image checksum and hash. A firmware
+//    that still has the slot unfilled cannot open the update window.
+#ifdef OTA_WIFI_PASSWORD
+  static_assert(sizeof(OTA_WIFI_PASSWORD) >= 9, "OTA_WIFI_PASSWORD needs at least 8 characters (WPA2)");
+  static const char* ota_wifi_password() { return OTA_WIFI_PASSWORD; }
+#else
+  #define OTA_PW_MARKER "@@OTA-PW-v1@@"   // site/espimage.js looks for exactly this text
+  // state byte: '-' = not set, 'P' = password follows (NUL terminated)
+  static const char ota_pw_slot[sizeof(OTA_PW_MARKER) - 1 + 1 + 64] __attribute__((used)) = OTA_PW_MARKER "-";
+  static const char* ota_wifi_password_slot() {
+    const char* p = ota_pw_slot + (sizeof(OTA_PW_MARKER) - 1);
+    __asm__ volatile("" : "+r"(p));   // keep the compiler from folding the slot, it is patched in the binary
+    return p;
+  }
+  static const char* ota_wifi_password() { return ota_wifi_password_slot()[0] == 'P' ? ota_wifi_password_slot() + 1 : ""; }
 #endif
-static_assert(sizeof(OTA_WIFI_PASSWORD) >= 9, "OTA_WIFI_PASSWORD needs at least 8 characters (WPA2)");
+static bool ota_wifi_password_ok() {
+  size_t n = strlen(ota_wifi_password());
+  return n >= 8 && n <= 63;   // WPA2
+}
 
 extern char bt_devname[];
 extern void ota_wifi_done(bool ok);
@@ -32,10 +51,11 @@ static const char OTA_PAGE[] PROGMEM =
   "<input type=submit value='Hochladen'></form></body></html>";
 
 static void ota_wifi_start() {
+  if (!ota_wifi_password_ok()) { ota_wifi_done(false); return; }   // no password: no window, back to normal operation
   WiFi.mode(WIFI_AP);
   char ssid[40];
   snprintf(ssid, sizeof(ssid), "%s UPDATE", bt_devname);
-  WiFi.softAP(ssid, OTA_WIFI_PASSWORD);
+  WiFi.softAP(ssid, ota_wifi_password());
   delay(150);
   IPAddress ip(10, 0, 0, 1), nm(255, 255, 255, 0);
   WiFi.softAPConfig(ip, ip, nm);

@@ -2,6 +2,7 @@
 // Nutzt vendor/rnode.js (RNode, ROM, Utils), vendor/nrf52_dfu_flasher.js (Nrf52DfuFlasher),
 // vendor/esptool-js und zip.js aus liamcottle/rnode-flasher (MIT).
 import { ESPLoader, Transport } from "./vendor/esptool-js/bundle.js";
+import { patchOtaPassword, checkPassword } from "./espimage.js";
 
 // Werte wie in flash-node.sh: RAK4631 und XIAO nRF52840 werden als RAK4631 eingetragen (Produkt 0x10, Modell 0x12),
 // der XIAO ESP32-S3 als Produkt 0xEB, Modell 0xDD.
@@ -86,12 +87,23 @@ function toBinaryString(bytes) {
 async function flashEsp32() {
   const b = board();
   const full = mode() === "full";
+  const password = $("ota-pw").value;
+  if (password) {
+    const problem = checkPassword(password);
+    if (problem) throw new Error(problem);
+  }
   const fileArray = [];
   for (const f of b.files) {
-    const bytes = await fetchBytes(f.path);
+    let bytes = await fetchBytes(f.path);
+    if (password && f.path.endsWith("/firmware.bin")) {
+      // Passwort in die Firmware eintragen, Prüfsumme und Hash werden dabei neu berechnet
+      bytes = await patchOtaPassword(bytes, password);
+      log("Update-Passwort eingetragen.");
+    }
     log(f.path.split("/").pop() + ": " + bytes.length + " Bytes");
     fileArray.push({ address: f.address, data: toBinaryString(bytes) });
   }
+  if (!password) log("Kein Update-Passwort angegeben: das WLAN-Update-Fenster bleibt gesperrt.");
   if (full && !confirm("„Neu einrichten“ löscht den ganzen Flash des Nodes (Einstellungen, Identität, Zugriffsliste). Fortfahren?")) {
     throw new Error("abgebrochen");
   }

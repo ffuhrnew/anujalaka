@@ -34,7 +34,8 @@
 
 extern RNS::Interface lora_interface;
 extern char boot_reset_reason[40];
-extern volatile bool ota_request;      // defined in RNode_Firmware.ino (used by the update window)
+extern volatile bool ota_request;
+extern bool ota_password_available();      // defined in RNode_Firmware.ino (used by the update window)
 extern volatile bool reboot_request;   // defined in RNode_Firmware.ino (delayed restart)
 extern char bt_devname[];
 #if HAS_WIFI && defined(UDP_TRANSPORT)
@@ -374,7 +375,9 @@ RNS::Bytes serve_page(
     }
     else if (path == "/page/ota_go.mu") {
       content = "> Update-Fenster\n\n";
-      if (battery_percent >= 30.0 || battery_voltage < 0.1) {
+      if (!ota_password_available()) {
+        content << "Nicht möglich: beim Flashen wurde kein Update-Passwort gesetzt.\n";
+      } else if (battery_percent >= 30.0 || battery_voltage < 0.1) {
         ota_request = true;
         content << "Wird geöffnet. Der Node startet in wenigen Sekunden neu.\n";
       } else {
