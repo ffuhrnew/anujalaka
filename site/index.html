@@ -84,7 +84,7 @@
 
     <div id="steps-esp32">
       <ol class="steps">
-        <li>Board per USB anstecken. Falls es nicht erkannt wird: <strong>BOOT</strong> gedrückt halten, anstecken, loslassen.</li>
+        <li>Board per USB anstecken und in den <strong>Download-Modus</strong> bringen: <strong>BOOT</strong> gedrückt halten, <strong>RESET</strong> kurz drücken, BOOT loslassen. Die Firmware auf dem Board lässt sich meist nicht selbst in diesen Modus schalten.</li>
         <li>Optional ein Passwort für das WLAN-Update-Fenster eingeben (unten).</li>
         <li>Auf „Flashen“ klicken und den Port des Boards wählen.</li>
       </ol>
@@ -118,6 +118,7 @@
       <button id="btn-wipe" class="secondary">a. EEPROM leeren</button>
       <button id="btn-provision" class="secondary">b. EEPROM einrichten</button>
       <button id="btn-hash">c. Firmware-Hash setzen</button>
+      <button id="btn-inspect" class="secondary">Status prüfen</button>
     </div>
     <p class="meta">Das Leeren dauert bis zu 30 Sekunden. Eine Gerätesignatur wird hier nicht erzeugt (wie im rnode-flasher), <code>rnodeconf</code> kann sie deshalb als nicht bestätigt melden.</p>
   </div>

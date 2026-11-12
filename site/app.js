@@ -70,6 +70,14 @@ async function pickPort() {
   return await navigator.serial.requestPort({ filters: [] });
 }
 
+// Gibt einen Port frei, auch wenn er schon zu ist. Ohne das bleibt er nach einem Fehler belegt,
+// und alle weiteren Versuche scheitern, bis die Seite neu geladen wird.
+async function releasePort(port) {
+  try { await port.close(); } catch (_) { /* war schon zu */ }
+}
+
+const hex = (bytes) => Array.from(bytes || [], (b) => b.toString(16).padStart(2, "0")).join("");
+
 async function fetchBytes(path) {
   const res = await fetch(path, { cache: "no-cache" });
   if (!res.ok) throw new Error(path + " nicht gefunden (HTTP " + res.status + "). Wurde die Firmware schon gebaut?");
@@ -109,33 +117,45 @@ async function flashEsp32() {
   }
   const port = await pickPort();
   const transport = new Transport(port, true);
-  const loader = new ESPLoader({
-    transport,
-    baudrate: 921600,
-    terminal: { clean() {}, writeLine: (t) => log(t), write: (t) => log(t) },
-  });
-  await loader.main();
-  await loader.writeFlash({
-    fileArray,
-    flashSize: b.flashSize,
-    flashMode: "DIO",
-    flashFreq: "80MHz",
-    eraseAll: full,
-    compress: true,
-    calculateMD5Hash: (image) => CryptoJS.MD5(CryptoJS.enc.Latin1.parse(image)),
-    reportProgress: (i, written, total) => setProgress(Math.floor((written / total) * 100)),
-  });
-  // Neustart über DTR, wie im rnode-flasher
-  await transport.setDTR(false);
-  await sleep(100);
-  await transport.setDTR(true);
-  try { await transport.disconnect(); } catch (_) { /* Port war schon zu */ }
+  try {
+    const loader = new ESPLoader({
+      transport,
+      baudrate: 921600,
+      terminal: { clean() {}, writeLine: (t) => log(t), write: (t) => log(t) },
+    });
+    try {
+      await loader.main();
+    } catch (e) {
+      throw new Error("Keine Verbindung zum Chip (" + (e && e.message ? e.message : e) + "). Download-Modus nötig: BOOT gedrückt halten, RESET kurz drücken, BOOT loslassen, dann nochmal Flashen.");
+    }
+    await loader.writeFlash({
+      fileArray,
+      flashSize: b.flashSize,
+      flashMode: "DIO",
+      flashFreq: "80MHz",
+      eraseAll: full,
+      compress: true,
+      calculateMD5Hash: (image) => CryptoJS.MD5(CryptoJS.enc.Latin1.parse(image)),
+      reportProgress: (i, written, total) => setProgress(Math.floor((written / total) * 100)),
+    });
+    // Neustart über DTR, wie im rnode-flasher
+    await transport.setDTR(false);
+    await sleep(100);
+    await transport.setDTR(true);
+  } finally {
+    try { await transport.disconnect(); } catch (_) { /* Port war schon zu */ }
+    await releasePort(port);
+  }
   log("Danach: Schritt 3 (Firmware-Hash setzen" + (full ? ", vorher EEPROM einrichten" : "") + ").");
 }
 
 async function enterDfu() {
   const port = await pickPort();
-  await new Nrf52DfuFlasher(port).enterDfuMode();
+  try {
+    await new Nrf52DfuFlasher(port).enterDfuMode();
+  } finally {
+    await releasePort(port);
+  }
   log("Board sollte jetzt im DFU-Modus sein. Als Nächstes „Flashen“.");
 }
 
@@ -144,9 +164,11 @@ async function flashNrf() {
   const bytes = await fetchBytes(b.zip);
   log(b.zip.split("/").pop() + ": " + bytes.length + " Bytes");
   const port = await pickPort();
-  const flasher = new Nrf52DfuFlasher(port);
-  await flasher.flash(new Blob([bytes]), (pct) => setProgress(Math.floor(pct)));
-  try { await port.close(); } catch (_) { /* schon zu */ }
+  try {
+    await new Nrf52DfuFlasher(port).flash(new Blob([bytes]), (pct) => setProgress(Math.floor(pct)));
+  } finally {
+    await releasePort(port);
+  }
   log("Danach: Schritt 3 (Firmware-Hash setzen" + (mode() === "full" ? ", vorher EEPROM einrichten" : "") + ").");
 }
 
@@ -155,9 +177,11 @@ async function flashNrf() {
 async function openRNode() {
   const port = await pickPort();
   const rnode = await RNode.fromSerialPort(port);
-  if (!(await rnode.detect())) {
+  try {
+    if (!(await rnode.detect())) throw new Error("Das gewählte Gerät meldet sich nicht als RNode. Nach dem Flashen kurz warten, dann nochmal.");
+  } catch (e) {
     await rnode.close();
-    throw new Error("Das gewählte Gerät meldet sich nicht als RNode. Nach dem Flashen kurz warten, dann nochmal.");
+    throw e;
   }
   return rnode;
 }
@@ -189,7 +213,12 @@ async function provisionEeprom() {
     for (let i = 0; i < 16; i++) await rnode.writeRom(ROM.ADDR_CHKSUM + i, checksum[i]);
     for (let i = 0; i < 128; i++) await rnode.writeRom(ROM.ADDR_SIGNATURE + i, 0x00);
     await rnode.writeRom(ROM.ADDR_INFO_LOCK, ROM.INFO_LOCK_BYTE);
-    await sleep(5000); // EEPROM-Schreibvorgänge abwarten
+    await sleep(2000); // EEPROM-Schreibvorgänge abwarten
+    const back = (await rnode.getRomAsObject()).parse();
+    if (!back || !back.is_provisioned || back.product !== b.product || back.model !== b.model) {
+      throw new Error("Beim Zurücklesen stimmen die Werte nicht: " + JSON.stringify(back) + ". Erst Schritt a (EEPROM leeren), dann nochmal b.");
+    }
+    log("Zurückgelesen: Produkt 0x" + back.product.toString(16) + ", Modell 0x" + back.model.toString(16) + ", Prüfsumme stimmt.");
     await rnode.reset();
   } finally {
     await rnode.close();
@@ -203,9 +232,38 @@ async function setFirmwareHash() {
     const details = (await rnode.getRomAsObject()).parse();
     if (!details || !details.is_provisioned) throw new Error("Der EEPROM ist nicht eingerichtet. Erst Schritt b.");
     // Der Node kennt den Hash seiner eigenen Firmware und bekommt ihn hier als erwarteten Wert eingetragen.
-    await rnode.setFirmwareHash(await rnode.getFirmwareHash());
-    await sleep(5000);
+    const actual = await rnode.getFirmwareHash();
+    await rnode.setFirmwareHash(actual);
+    await sleep(2000);
+    const target = await rnode.getTargetFirmwareHash();
+    if (hex(target) !== hex(actual)) {
+      throw new Error("Hash nicht übernommen. Erwartet " + hex(actual) + ", gespeichert " + hex(target) + ".");
+    }
+    log("Firmware-Hash gesetzt und zurückgelesen: " + hex(actual).slice(0, 16) + " …");
     try { await rnode.reset(); } catch (_) { /* hat sich vielleicht selbst neu gestartet */ }
+  } finally {
+    await rnode.close();
+  }
+}
+
+async function inspectNode() {
+  const rnode = await openRNode();
+  try {
+    const d = (await rnode.getRomAsObject()).parse();
+    if (!d) {
+      log("EEPROM: nicht eingerichtet (Info-Sperre fehlt). Schritt b.");
+    } else {
+      log("EEPROM: " + (d.is_provisioned ? "eingerichtet" : "Prüfsumme passt NICHT") +
+        ", Produkt 0x" + d.product.toString(16) + ", Modell 0x" + d.model.toString(16) +
+        ", Hardware-Rev " + d.hardware_revision + ", Seriennr. " + d.serial_number);
+      log("Prüfsumme gespeichert " + d.checksum + ", berechnet " + d.calculated_checksum);
+      log("Konfiguriert: " + (d.is_configured ? "ja" : "nein"));
+    }
+    const target = await rnode.getTargetFirmwareHash();
+    const actual = await rnode.getFirmwareHash();
+    log("Firmware-Hash gesetzt:   " + hex(target));
+    log("Firmware-Hash tatsächlich: " + hex(actual));
+    log("Hash " + (hex(target) === hex(actual) ? "passt" : "passt NICHT, Schritt c"), hex(target) === hex(actual) ? "ok" : "err");
   } finally {
     await rnode.close();
   }
@@ -240,6 +298,7 @@ if (!("serial" in navigator)) {
   $("btn-wipe").onclick = () => run("EEPROM leeren", wipeEeprom);
   $("btn-provision").onclick = () => run("EEPROM einrichten", provisionEeprom);
   $("btn-hash").onclick = () => run("Firmware-Hash setzen", setFirmwareHash);
+  $("btn-inspect").onclick = () => run("Status prüfen", inspectNode);
 }
 document.querySelectorAll('input[name="board"]').forEach((r) => r.addEventListener("change", updateView));
 updateView();
