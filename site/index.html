@@ -113,10 +113,10 @@
   <div class="card">
     <h2>3. Nach dem Flashen</h2>
     <p><strong>Update:</strong> nur Schritt c. Der Firmware-Hash ändert sich mit jeder neuen Firmware und muss danach gesetzt werden.</p>
-    <p><strong>Neu einrichten:</strong> der Reihe nach a, b, c. Jeder Schritt fragt den Port neu ab, weil das Board dazwischen neu startet.</p>
+    <p><strong>Neu einrichten:</strong> nach dem vollen Flash nur noch b (setzt auch den Hash). Schritt a nur bei einem Node, der vorher schon benutzt wurde. Jeder Schritt fragt den Port neu ab, weil das Board dazwischen neu startet.</p>
     <div class="row">
       <button id="btn-wipe" class="secondary">a. EEPROM leeren</button>
-      <button id="btn-provision" class="secondary">b. EEPROM einrichten</button>
+      <button id="btn-provision" class="secondary">b. Einrichten (EEPROM und Hash)</button>
       <button id="btn-hash">c. Firmware-Hash setzen</button>
       <button id="btn-inspect" class="secondary">Status prüfen</button>
     </div>
