@@ -208,9 +208,11 @@ async function flashNrf() {
 
 // ---- Nach dem Flashen ------------------------------------------------------
 
+
 async function openRNode(port) {
   port = port || await pickPort();
   const rnode = await RNode.fromSerialPort(port);
+
   try {
     // Direkt nach dem Öffnen startet der ESP32-S3 teils neu und verschluckt die ersten Befehle:
     // bis zu 6 Versuche, erst Erkennung, dann EEPROM-Lesen als Lebenszeichen.
@@ -226,6 +228,7 @@ async function openRNode(port) {
     throw e;
   }
 }
+
 
 async function wipeEeprom() {
   const port = await pickPort();   // zuerst, solange die Klick-Erlaubnis gilt
