@@ -209,17 +209,32 @@ async function flashNrf() {
 
 // ---- Nach dem Flashen ------------------------------------------------------
 
+
 async function openRNode(port) {
   port = port || await pickPort();
   const rnode = await RNode.fromSerialPort(port);
+
   try {
-    if (!(await rnode.detect())) throw new Error("Das gewählte Gerät meldet sich nicht als RNode. Nach dem Flashen kurz warten, dann nochmal.");
+    // Nicht CMD_DETECT verwenden: EEPROM-Lesen ist
+    // der zuverlässigere Nachweis einer RNode-Verbindung.
+    const eeprom = await Promise.race([
+      rnode.getRom(),
+      sleep(5000).then(() => {
+        throw new Error("Keine Antwort vom RNode über USB (Timeout beim EEPROM-Lesen).");
+      }),
+    ]);
+
+    if (!eeprom || eeprom.length < 0x9C) {
+      throw new Error("Ungültige oder unvollständige EEPROM-Antwort.");
+    }
+
+    return rnode;
   } catch (e) {
     await rnode.close();
     throw e;
   }
-  return rnode;
 }
+
 
 async function wipeEeprom() {
   const port = await pickPort();   // zuerst, solange die Klick-Erlaubnis gilt
