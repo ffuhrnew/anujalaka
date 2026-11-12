@@ -179,6 +179,11 @@ class RNode {
                     break;
                 }
 
+                // anujalaka: Rohdaten für die Fehlersuche weitergeben
+                if(RNode.rawTap){
+                    try { RNode.rawTap(value); } catch(_) {}
+                }
+
                 // read kiss frames
                 for(const byte of value){
                     if(byte === this.KISS_FEND){
