@@ -275,18 +275,35 @@ async function provisionEeprom() {
       throw new Error("Beim Zurücklesen stimmen die Werte nicht: " + JSON.stringify(back) + ". Erst Schritt a (EEPROM leeren), dann nochmal b.");
     }
     log("Zurückgelesen: Produkt 0x" + back.product.toString(16) + ", Modell 0x" + back.model.toString(16) + ", Prüfsumme stimmt.");
-    // Gleich auf derselben Verbindung den Hash setzen, ohne Neustart und erneutes Öffnen dazwischen.
-    await applyFirmwareHash(rnode);
-    try { await rnode.reset(); } catch (_) { /* hat sich vielleicht selbst neu gestartet */ }
+    // Die Firmware berechnet ihren Hash erst nach einem Neustart: neu starten, denselben Port wieder öffnen, Hash setzen.
+    const port = rnode.serialPort;
+    try { await rnode.reset(); } catch (_) { /* hat sich vielleicht schon selbst neu gestartet */ }
+    await rnode.close();
+    log("Node startet neu, warte auf ihn …");
+    const again = await reopenAfterReset(port);
+    try {
+      await applyFirmwareHash(again);
+    } finally {
+      await again.close();
+    }
   } finally {
     await rnode.close();
   }
-  log("Fertig. Der Node startet neu.");
+  log("Fertig.");
 }
 
 // Trägt den Hash der laufenden Firmware als erwarteten Wert ein und liest ihn zurück.
+// Direkt nach dem Einrichten des EEPROMs meldet die Firmware noch nur Nullen: sie berechnet den Hash erst beim
+// nächsten Start. Nullen werden deshalb nie eingetragen, sondern es wird auf den echten Wert gewartet.
+const isZeroHash = (h) => h.every((b) => b === 0);
+
 async function applyFirmwareHash(rnode) {
-  const actual = await rnode.getFirmwareHash();
+  let actual = await rnode.getFirmwareHash();
+  for (let i = 0; i < 10 && isZeroHash(actual); i++) {
+    await sleep(1000);
+    actual = await rnode.getFirmwareHash();
+  }
+  if (isZeroHash(actual)) throw new Error("Der Node meldet noch keinen Firmware-Hash. Board neu anstecken und Schritt c ausführen.");
   await rnode.setFirmwareHash(actual);
   await sleep(2000);
   const target = await rnode.getTargetFirmwareHash();
@@ -294,6 +311,23 @@ async function applyFirmwareHash(rnode) {
     throw new Error("Hash nicht übernommen. Erwartet " + hex(actual) + ", gespeichert " + hex(target) + ".");
   }
   log("Firmware-Hash gesetzt und zurückgelesen: " + hex(actual).slice(0, 16) + " …");
+}
+
+// Öffnet nach einem Neustart des Boards denselben Port wieder, ohne neue Auswahl (die Erlaubnis bleibt bestehen).
+async function reopenAfterReset(oldPort) {
+  const info = oldPort.getInfo ? oldPort.getInfo() : {};
+  for (let i = 0; i < 15; i++) {
+    await sleep(1000);
+    const ports = await navigator.serial.getPorts();
+    const match = ports.find((p) => {
+      const pi = p.getInfo();
+      return pi.usbVendorId === info.usbVendorId && pi.usbProductId === info.usbProductId;
+    });
+    if (match) {
+      try { return await openRNode(match); } catch (_) { /* noch nicht bereit */ }
+    }
+  }
+  throw new Error("Der Node ist nach dem Neustart nicht wieder erschienen. Board neu anstecken und Schritt c ausführen.");
 }
 
 async function setFirmwareHash() {
