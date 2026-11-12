@@ -112,7 +112,6 @@ function espTerminal() {
 // dann mit dem automatischen Reset von esptool-js (für Boards, die noch die Firmware ausführen).
 async function connectEsp32(port, baudrate) {
   const attempts = [
-    ["no_reset", "Verbindung ohne Reset (Board ist im Download-Modus)"],
     ["default_reset", "Verbindung mit automatischem Reset"],
   ];
   for (const [resetMode, label] of attempts) {
