@@ -213,12 +213,19 @@ async function openRNode(port) {
   port = port || await pickPort();
   const rnode = await RNode.fromSerialPort(port);
   try {
-    if (!(await rnode.detect())) throw new Error("Das gewählte Gerät meldet sich nicht als RNode. Nach dem Flashen kurz warten, dann nochmal.");
+    // Direkt nach dem Öffnen startet der ESP32-S3 teils neu und verschluckt die ersten Befehle:
+    // bis zu 6 Versuche, erst Erkennung, dann EEPROM-Lesen als Lebenszeichen.
+    for (let i = 0; i < 6; i++) {
+      if (await rnode.detect()) return rnode;
+      const rom = await Promise.race([rnode.getRom().catch(() => null), sleep(1500).then(() => null)]);
+      if (rom && rom.length >= 0x9c) return rnode;
+      await sleep(500);
+    }
+    throw new Error("Das gewählte Gerät meldet sich nicht als RNode. Nach dem Flashen kurz warten, dann nochmal.");
   } catch (e) {
     await rnode.close();
     throw e;
   }
-  return rnode;
 }
 
 async function wipeEeprom() {
