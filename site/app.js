@@ -211,24 +211,35 @@ async function flashNrf() {
 
 async function openRNode(port) {
   port = port || await pickPort();
+  // Rohdaten mitschreiben: Die Firmware gibt beim Start Textzeilen aus, die zeigen, wo sie gerade steht.
+  let raw = [], rawCount = 0;
+  RNode.rawTap = (chunk) => { rawCount += chunk.length; raw.push(...chunk); if (raw.length > 4000) raw = raw.slice(-4000); };
   const rnode = await RNode.fromSerialPort(port);
-
   try {
-    // Direkt nach dem Öffnen startet der ESP32-S3 teils neu und verschluckt die ersten Befehle:
-    // bis zu 6 Versuche, erst Erkennung, dann EEPROM-Lesen als Lebenszeichen.
-    for (let i = 0; i < 6; i++) {
+    // Beim ersten Start nach dem Flashen formatiert der Node seinen Speicher und legt eine Identität an.
+    // Das kann deutlich länger dauern als ein normaler Start, daher bis zu 90 Sekunden warten.
+    const start = Date.now();
+    let nextNote = 10000;
+    while (Date.now() - start < 90000) {
       if (await rnode.detect()) return rnode;
       const rom = await Promise.race([rnode.getRom().catch(() => null), sleep(1500).then(() => null)]);
       if (rom && rom.length >= 0x9c) return rnode;
+      if (Date.now() - start >= nextNote) {
+        log("Warte auf den Node … " + Math.round((Date.now() - start) / 1000) + " s, " + rawCount + " Bytes empfangen");
+        nextNote += 10000;
+      }
       await sleep(500);
     }
-    throw new Error("Das gewählte Gerät meldet sich nicht als RNode. Nach dem Flashen kurz warten, dann nochmal.");
+    const text = new TextDecoder().decode(new Uint8Array(raw)).replace(/[^\x20-\x7e\r\n]/g, "·").trim();
+    log("Empfangen vom Board (" + rawCount + " Bytes, letzte Ausgabe):\n" + (text.slice(-800) || "(nichts)"));
+    throw new Error("Das gewählte Gerät meldet sich nicht als RNode.");
   } catch (e) {
     await rnode.close();
     throw e;
+  } finally {
+    RNode.rawTap = null;
   }
 }
-
 
 async function wipeEeprom() {
   const port = await pickPort();   // zuerst, solange die Klick-Erlaubnis gilt
