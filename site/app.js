@@ -217,10 +217,10 @@ async function openRNode(port) {
   const rnode = await RNode.fromSerialPort(port);
   try {
     // Beim ersten Start nach dem Flashen formatiert der Node seinen Speicher und legt eine Identität an.
-    // Das kann deutlich länger dauern als ein normaler Start, daher bis zu 90 Sekunden warten.
+    // Das kann deutlich länger dauern als ein normaler Start, daher bis zu 20 Sekunden warten.
     const start = Date.now();
     let nextNote = 10000;
-    while (Date.now() - start < 90000) {
+    while (Date.now() - start < 20000) {
       if (await rnode.detect()) return rnode;
       const rom = await Promise.race([rnode.getRom().catch(() => null), sleep(1500).then(() => null)]);
       if (rom && rom.length >= 0x9c) return rnode;
