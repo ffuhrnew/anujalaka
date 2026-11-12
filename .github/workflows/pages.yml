@@ -79,6 +79,25 @@ jobs:
           cp -r site/. pages/
           cp webconsole/index.html pages/console.html
           touch pages/.nojekyll
+
+      # Aktuelle esptool-js-Version (0.5.x) statt der mitgelieferten 0.4.5: bessere Verbindung über USB-Serial-JTAG
+      # (XIAO ESP32-S3). Nur übernehmen, wenn sie sich laden lässt und ESPLoader und Transport enthält,
+      # sonst bleibt die mitgelieferte Version.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: esptool-js aktualisieren
+        run: |
+          set -u
+          tmp="$(mktemp -d)"
+          if (cd "$tmp" && npm pack "esptool-js@0.5" --silent && tar xzf esptool-js-*.tgz) \
+             && node --input-type=module -e "const m = await import('$tmp/package/bundle.js'); if (!m.ESPLoader || !m.Transport) process.exit(1);" ; then
+            cp "$tmp/package/bundle.js" pages/vendor/esptool-js/bundle.js
+            echo "esptool-js $(node -p "require('$tmp/package/package.json').version") übernommen"
+          else
+            echo "esptool-js bleibt bei der mitgelieferten Version"
+          fi
           python3 tools/make_manifest.py pages/firmware "$GITHUB_SHA"
 
       - uses: actions/configure-pages@v5
