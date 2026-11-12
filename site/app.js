@@ -92,6 +92,47 @@ function toBinaryString(bytes) {
 
 // ---- Flashen ---------------------------------------------------------------
 
+// esptool-js schreibt die Verbindungsversuche zeichenweise (".", "_"). Das fassen wir zu einer Zeile zusammen.
+function espTerminal() {
+  let pending = "";
+  const flush = () => {
+    const s = pending.replace(/[\r\n]+/g, "").trim();
+    if (s) log(s);
+    pending = "";
+  };
+  return {
+    clean() {},
+    write(t) { pending += t; if (/[\r\n]/.test(t)) flush(); },
+    writeLine(t) { flush(); log(t); },
+    flush,
+  };
+}
+
+// Verbindet mit dem Chip. Erst ohne Reset (das Board ist von Hand im Download-Modus, ein Reset würde ihn verlassen),
+// dann mit dem automatischen Reset von esptool-js (für Boards, die noch die Firmware ausführen).
+async function connectEsp32(port, baudrate) {
+  const attempts = [
+    ["no_reset", "Verbindung ohne Reset (Board ist im Download-Modus)"],
+    ["default_reset", "Verbindung mit automatischem Reset"],
+  ];
+  for (const [resetMode, label] of attempts) {
+    const terminal = espTerminal();
+    const transport = new Transport(port, false);
+    const loader = new ESPLoader({ transport, baudrate, terminal });
+    log(label + " …");
+    try {
+      await loader.main(resetMode);
+      terminal.flush();
+      return { transport, loader };
+    } catch (e) {
+      terminal.flush();
+      log("Nicht verbunden: " + (e && e.message ? e.message : e));
+      try { await transport.disconnect(); } catch (_) { /* schon zu */ }
+    }
+  }
+  throw new Error("Keine Verbindung zum Chip. Prüfe, ob das Board im Download-Modus ist: USB abziehen, BOOT-Knopf gedrückt halten, USB einstecken, erst dann loslassen. Dann nochmal Flashen.");
+}
+
 async function flashEsp32() {
   const b = board();
   const full = mode() === "full";
@@ -118,18 +159,11 @@ async function flashEsp32() {
     fileArray.push({ address: f.address, data: toBinaryString(bytes) });
   }
   if (!password) log("Kein Update-Passwort angegeben: das WLAN-Update-Fenster bleibt gesperrt.");
-  const transport = new Transport(port, true);
+  let transport;
   try {
-    const loader = new ESPLoader({
-      transport,
-      baudrate: 921600,
-      terminal: { clean() {}, writeLine: (t) => log(t), write: (t) => log(t) },
-    });
-    try {
-      await loader.main();
-    } catch (e) {
-      throw new Error("Keine Verbindung zum Chip (" + (e && e.message ? e.message : e) + "). Download-Modus nötig: BOOT gedrückt halten, RESET kurz drücken, BOOT loslassen, dann nochmal Flashen.");
-    }
+    const conn = await connectEsp32(port, 921600);
+    transport = conn.transport;
+    const loader = conn.loader;
     await loader.writeFlash({
       fileArray,
       flashSize: b.flashSize,
@@ -140,12 +174,11 @@ async function flashEsp32() {
       calculateMD5Hash: (image) => CryptoJS.MD5(CryptoJS.enc.Latin1.parse(image)),
       reportProgress: (i, written, total) => setProgress(Math.floor((written / total) * 100)),
     });
-    // Neustart über DTR, wie im rnode-flasher
-    await transport.setDTR(false);
-    await sleep(100);
-    await transport.setDTR(true);
+    // Neustart über die Reset-Leitung (RTS)
+    try { await loader.hardReset(); } catch (_) { /* siehe Hinweis unten */ }
+    log("Falls das Board nicht von selbst startet: kurz USB abziehen und wieder einstecken.");
   } finally {
-    try { await transport.disconnect(); } catch (_) { /* Port war schon zu */ }
+    if (transport) { try { await transport.disconnect(); } catch (_) { /* Port war schon zu */ } }
     await releasePort(port);
   }
   log("Danach: Schritt 3 (Firmware-Hash setzen" + (full ? ", vorher EEPROM einrichten" : "") + ").");
