@@ -275,11 +275,25 @@ async function provisionEeprom() {
       throw new Error("Beim Zurücklesen stimmen die Werte nicht: " + JSON.stringify(back) + ". Erst Schritt a (EEPROM leeren), dann nochmal b.");
     }
     log("Zurückgelesen: Produkt 0x" + back.product.toString(16) + ", Modell 0x" + back.model.toString(16) + ", Prüfsumme stimmt.");
-    await rnode.reset();
+    // Gleich auf derselben Verbindung den Hash setzen, ohne Neustart und erneutes Öffnen dazwischen.
+    await applyFirmwareHash(rnode);
+    try { await rnode.reset(); } catch (_) { /* hat sich vielleicht selbst neu gestartet */ }
   } finally {
     await rnode.close();
   }
-  log("Danach Board kurz neu anstecken, dann Schritt c.");
+  log("Fertig. Der Node startet neu.");
+}
+
+// Trägt den Hash der laufenden Firmware als erwarteten Wert ein und liest ihn zurück.
+async function applyFirmwareHash(rnode) {
+  const actual = await rnode.getFirmwareHash();
+  await rnode.setFirmwareHash(actual);
+  await sleep(2000);
+  const target = await rnode.getTargetFirmwareHash();
+  if (hex(target) !== hex(actual)) {
+    throw new Error("Hash nicht übernommen. Erwartet " + hex(actual) + ", gespeichert " + hex(target) + ".");
+  }
+  log("Firmware-Hash gesetzt und zurückgelesen: " + hex(actual).slice(0, 16) + " …");
 }
 
 async function setFirmwareHash() {
@@ -287,15 +301,7 @@ async function setFirmwareHash() {
   try {
     const details = (await rnode.getRomAsObject()).parse();
     if (!details || !details.is_provisioned) throw new Error("Der EEPROM ist nicht eingerichtet. Erst Schritt b.");
-    // Der Node kennt den Hash seiner eigenen Firmware und bekommt ihn hier als erwarteten Wert eingetragen.
-    const actual = await rnode.getFirmwareHash();
-    await rnode.setFirmwareHash(actual);
-    await sleep(2000);
-    const target = await rnode.getTargetFirmwareHash();
-    if (hex(target) !== hex(actual)) {
-      throw new Error("Hash nicht übernommen. Erwartet " + hex(actual) + ", gespeichert " + hex(target) + ".");
-    }
-    log("Firmware-Hash gesetzt und zurückgelesen: " + hex(actual).slice(0, 16) + " …");
+    await applyFirmwareHash(rnode);
     try { await rnode.reset(); } catch (_) { /* hat sich vielleicht selbst neu gestartet */ }
   } finally {
     await rnode.close();
