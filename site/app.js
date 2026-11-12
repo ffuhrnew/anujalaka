@@ -215,17 +215,8 @@ async function openRNode(port) {
   const rnode = await RNode.fromSerialPort(port);
 
   try {
-    // Nicht CMD_DETECT verwenden: EEPROM-Lesen ist
-    // der zuverlässigere Nachweis einer RNode-Verbindung.
-    const eeprom = await Promise.race([
-      rnode.getRom(),
-      sleep(5000).then(() => {
-        throw new Error("Keine Antwort vom RNode über USB (Timeout beim EEPROM-Lesen).");
-      }),
-    ]);
-
-    if (!eeprom || eeprom.length < 0x9C) {
-      throw new Error("Ungültige oder unvollständige EEPROM-Antwort.");
+    if (!(await rnode.detect())) {
+      throw new Error("Das gewählte Gerät meldet sich nicht als RNode. Nach dem Flashen kurz warten, dann nochmal.");
     }
 
     return rnode;
