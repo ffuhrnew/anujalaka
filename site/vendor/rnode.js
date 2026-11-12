@@ -185,20 +185,21 @@ class RNode {
                 }
 
                 // read kiss frames
+                // anujalaka: FEND trennt Rahmen, ohne mitzuzählen. Das Original schaltet bei jedem FEND um
+                // (Anfang/Ende); beginnt der Empfang mitten in einem Rahmen, bleibt es dauerhaft verdreht
+                // und erkennt keine Antwort mehr.
                 for(const byte of value){
                     if(byte === this.KISS_FEND){
-                        if(inFrame){
-                            // End of frame
+                        if(buffer.length > 0){
                             const decodedFrame = this.decodeKissFrame(buffer);
-                            if(decodedFrame){
+                            if(decodedFrame && decodedFrame.length > 0){
                                 this.onCommandReceived(decodedFrame);
                             } else {
                                 console.warn("Invalid frame ignored.");
                             }
-                            buffer = [];
                         }
-                        inFrame = !inFrame;
-                    } else if(inFrame) {
+                        buffer = [];
+                    } else {
                         buffer.push(byte);
                     }
                 }
