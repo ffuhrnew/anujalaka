@@ -113,6 +113,7 @@ function espTerminal() {
 async function connectEsp32(port, baudrate) {
   const attempts = [
     ["default_reset", "Verbindung mit automatischem Reset"],
+    ["no_reset", "Verbindung ohne Reset (Board ist schon im Download-Modus)"],
   ];
   for (const [resetMode, label] of attempts) {
     const terminal = espTerminal();
