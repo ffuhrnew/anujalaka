@@ -54,7 +54,7 @@ jobs:
 
       - name: ESP32-Abbild nach Passwort-Eintrag prüfen
         if: matrix.env == 'seeed_xiao_esp32s3'
-        run: tools/check_esp_image.sh .pio/build/seeed_xiao_esp32s3/firmware.bin
+        run: tools/check_esp_image.sh .pio/build/seeed_xiao_esp32s3/rnode_firmware_xiao_esp32s3.bin
 
       - name: Ergebnisse einsammeln
         run: tools/collect_firmware.sh ${{ matrix.env }} out/firmware
