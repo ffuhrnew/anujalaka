@@ -95,10 +95,16 @@ function toBinaryString(bytes) {
 async function flashEsp32() {
   const b = board();
   const full = mode() === "full";
+  // Der Port muss ganz am Anfang gewählt werden: Chrome erlaubt das nur kurz nach dem Klick.
+  // Danach darf alles andere (Prüfen, Bestätigen, Laden) beliebig lange dauern.
+  const port = await pickPort();
   const password = $("ota-pw").value;
   if (password) {
     const problem = checkPassword(password);
     if (problem) throw new Error(problem);
+  }
+  if (full && !confirm("„Neu einrichten“ löscht den ganzen Flash des Nodes (Einstellungen, Identität, Zugriffsliste). Fortfahren?")) {
+    throw new Error("abgebrochen");
   }
   const fileArray = [];
   for (const f of b.files) {
@@ -112,10 +118,6 @@ async function flashEsp32() {
     fileArray.push({ address: f.address, data: toBinaryString(bytes) });
   }
   if (!password) log("Kein Update-Passwort angegeben: das WLAN-Update-Fenster bleibt gesperrt.");
-  if (full && !confirm("„Neu einrichten“ löscht den ganzen Flash des Nodes (Einstellungen, Identität, Zugriffsliste). Fortfahren?")) {
-    throw new Error("abgebrochen");
-  }
-  const port = await pickPort();
   const transport = new Transport(port, true);
   try {
     const loader = new ESPLoader({
@@ -161,9 +163,9 @@ async function enterDfu() {
 
 async function flashNrf() {
   const b = board();
+  const port = await pickPort();   // zuerst, solange die Klick-Erlaubnis gilt
   const bytes = await fetchBytes(b.zip);
   log(b.zip.split("/").pop() + ": " + bytes.length + " Bytes");
-  const port = await pickPort();
   try {
     await new Nrf52DfuFlasher(port).flash(new Blob([bytes]), (pct) => setProgress(Math.floor(pct)));
   } finally {
@@ -174,8 +176,8 @@ async function flashNrf() {
 
 // ---- Nach dem Flashen ------------------------------------------------------
 
-async function openRNode() {
-  const port = await pickPort();
+async function openRNode(port) {
+  port = port || await pickPort();
   const rnode = await RNode.fromSerialPort(port);
   try {
     if (!(await rnode.detect())) throw new Error("Das gewählte Gerät meldet sich nicht als RNode. Nach dem Flashen kurz warten, dann nochmal.");
@@ -187,8 +189,9 @@ async function openRNode() {
 }
 
 async function wipeEeprom() {
+  const port = await pickPort();   // zuerst, solange die Klick-Erlaubnis gilt
   if (!confirm("Das löscht den EEPROM des Nodes (Gerätedaten und Funk-Einstellungen). Fortfahren?")) throw new Error("abgebrochen");
-  const rnode = await openRNode();
+  const rnode = await openRNode(port);
   log("EEPROM wird geleert, das dauert bis zu 30 Sekunden …");
   await rnode.wipeRom();
   await rnode.close();
