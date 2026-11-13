@@ -212,12 +212,16 @@ async function flashNrf() {
 // ---- Nach dem Flashen ------------------------------------------------------
 
 
+const withTimeout = (promise, ms, msg) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))]);
+const closeQuiet = (rnode) => withTimeout(rnode.close(), 3000, "close").catch(() => {});
+
 async function openRNode(port) {
   port = port || await pickPort();
   // Rohdaten mitschreiben: Die Firmware gibt beim Start Textzeilen aus, die zeigen, wo sie gerade steht.
   let raw = [], rawCount = 0;
   RNode.rawTap = (chunk) => { rawCount += chunk.length; raw.push(...chunk); if (raw.length > 4000) raw = raw.slice(-4000); };
-  const rnode = await RNode.fromSerialPort(port);
+  const rnode = await withTimeout(RNode.fromSerialPort(port), 8000, "Der Port lässt sich nicht öffnen.");
   // Der Browser setzt beim Öffnen DTR und RTS. Auf dem ESP32-S3 (USB-Serial-JTAG) führt das beim nächsten Neustart
   // in den Download-Modus: das Board schweigt dann, die Firmware läuft nicht. Deshalb gleich beide loslassen.
   const setLines = (dtr, rts) => port.setSignals({ dataTerminalReady: dtr, requestToSend: rts }).catch(() => {});
@@ -251,7 +255,7 @@ async function openRNode(port) {
     log("Empfangen vom Board (" + rawCount + " Bytes, letzte Ausgabe):\n" + (text.slice(-800) || "(nichts)"));
     throw new Error("Das gewählte Gerät meldet sich nicht als RNode.");
   } catch (e) {
-    await rnode.close();
+    await closeQuiet(rnode);
     throw e;
   } finally {
     RNode.rawTap = null;
@@ -266,6 +270,109 @@ async function wipeEeprom() {
   await rnode.wipeRom();
   await rnode.close();
   log("Danach Board kurz neu anstecken, dann Schritt b.");
+}
+
+async function provisionEeprom() {
+  const b = board();
+  const rnode = await openRNode();
+  try {
+    const rom = await rnode.getRomAsObject();
+    if (rom.parse()) throw new Error("Der EEPROM ist schon eingerichtet. Erst Schritt a (EEPROM leeren).");
+    const hwRev = 0x1;
+    const serial = Utils.packUInt32BE(1);
+    const made = Utils.packUInt32BE(Math.floor(Date.now() / 1000));
+    const checksum = Utils.md5([b.product, b.model, hwRev, ...serial, ...made]);
+    await rnode.writeRom(ROM.ADDR_PRODUCT, b.product);
+    await rnode.writeRom(ROM.ADDR_MODEL, b.model);
+    await rnode.writeRom(ROM.ADDR_HW_REV, hwRev);
+    for (let i = 0; i < 4; i++) await rnode.writeRom(ROM.ADDR_SERIAL + i, serial[i]);
+    for (let i = 0; i < 4; i++) await rnode.writeRom(ROM.ADDR_MADE + i, made[i]);
+    for (let i = 0; i < 16; i++) await rnode.writeRom(ROM.ADDR_CHKSUM + i, checksum[i]);
+    for (let i = 0; i < 128; i++) await rnode.writeRom(ROM.ADDR_SIGNATURE + i, 0x00);
+    await rnode.writeRom(ROM.ADDR_INFO_LOCK, ROM.INFO_LOCK_BYTE);
+    await sleep(2000); // EEPROM-Schreibvorgänge abwarten
+    const back = (await rnode.getRomAsObject()).parse();
+    if (!back || !back.is_provisioned || back.product !== b.product || back.model !== b.model) {
+      throw new Error("Beim Zurücklesen stimmen die Werte nicht: " + JSON.stringify(back) + ". Erst Schritt a (EEPROM leeren), dann nochmal b.");
+    }
+    log("Zurückgelesen: Produkt 0x" + back.product.toString(16) + ", Modell 0x" + back.model.toString(16) + ", Prüfsumme stimmt.");
+    // Die Firmware berechnet ihren Hash erst nach einem Neustart: neu starten, denselben Port wieder öffnen, Hash setzen.
+    const port = rnode.serialPort;
+    const watch = watchReconnect(port);
+    try { await withTimeout(rnode.reset(), 3000, "reset"); } catch (_) { /* hat sich vielleicht schon selbst neu gestartet */ }
+    await closeQuiet(rnode);
+    log("Node startet neu, warte auf ihn …");
+    const again = await reopenAfterReset(port, watch);
+    try {
+      await applyFirmwareHash(again);
+    } finally {
+      await closeQuiet(again);
+    }
+  } finally {
+    await closeQuiet(rnode);
+  }
+  log("Fertig.");
+}
+
+// Trägt den Hash der laufenden Firmware als erwarteten Wert ein und liest ihn zurück.
+// Direkt nach dem Einrichten des EEPROMs meldet die Firmware noch nur Nullen: sie berechnet den Hash erst beim
+// nächsten Start. Nullen werden deshalb nie eingetragen, sondern es wird auf den echten Wert gewartet.
+const isZeroHash = (h) => h.every((b) => b === 0);
+
+async function applyFirmwareHash(rnode) {
+  let actual = await rnode.getFirmwareHash();
+  for (let i = 0; i < 10 && isZeroHash(actual); i++) {
+    await sleep(1000);
+    actual = await rnode.getFirmwareHash();
+  }
+  if (isZeroHash(actual)) throw new Error("Der Node meldet noch keinen Firmware-Hash. Board neu anstecken und Schritt c ausführen.");
+  await rnode.setFirmwareHash(actual);
+  await sleep(2000);
+  const target = await rnode.getTargetFirmwareHash();
+  if (hex(target) !== hex(actual)) {
+    throw new Error("Hash nicht übernommen. Erwartet " + hex(actual) + ", gespeichert " + hex(target) + ".");
+  }
+  log("Firmware-Hash gesetzt und zurückgelesen: " + hex(actual).slice(0, 16) + " …");
+}
+
+// Merkt sich, wenn das Board nach einem Neustart als neues USB-Gerät wieder auftaucht.
+function watchReconnect(port) {
+  const info = port.getInfo();
+  const same = (p) => { const pi = p.getInfo(); return pi.usbVendorId === info.usbVendorId && pi.usbProductId === info.usbProductId; };
+  const state = { port: null, same };
+  const onConnect = (e) => { if (e.target && same(e.target)) state.port = e.target; };
+  navigator.serial.addEventListener("connect", onConnect);
+  state.stop = () => navigator.serial.removeEventListener("connect", onConnect);
+  return state;
+}
+
+// Öffnet nach einem Neustart des Boards denselben Port wieder, ohne neue Auswahl (die Erlaubnis bleibt bestehen).
+// Nach dem Neustart meldet sich das Board als neues USB-Gerät: das alte Port-Objekt ist dann ungültig.
+async function reopenAfterReset(oldPort, watch) {
+  const start = Date.now();
+  let noted = false, lastErr = "";
+  try {
+    while (Date.now() - start < 70000) {
+      await sleep(1000);
+      const ports = await navigator.serial.getPorts();
+      const waited = Date.now() - start;
+      const cand = watch.port
+        || ports.find((p) => p !== oldPort && watch.same(p))
+        || (waited > 10000 ? ports.find(watch.same) : null);   // kein Neuanmelden bemerkt: altes Objekt versuchen
+      if (!cand) continue;
+      if (!noted) { log("Node ist wieder da, öffne die Verbindung …"); noted = true; }
+      try {
+        return await withTimeout(openRNode(cand), 40000, "Zeitüberschreitung beim Öffnen.");
+      } catch (e) {
+        lastErr = e && e.message ? e.message : String(e);
+        watch.port = null;
+      }
+    }
+  } finally {
+    watch.stop();
+  }
+  throw new Error("Der Node ist nach dem Neustart nicht wieder erreichbar" + (lastErr ? " (" + lastErr + ")" : "") +
+    ". Board neu anstecken und Schritt c ausführen.");
 }
 
 async function provisionEeprom() {
