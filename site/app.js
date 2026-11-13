@@ -253,7 +253,9 @@ async function openRNode(port) {
   // Der Browser setzt beim Öffnen DTR und RTS. Auf dem ESP32-S3 (USB-Serial-JTAG) führt das beim nächsten Neustart
   // in den Download-Modus: das Board schweigt dann, die Firmware läuft nicht. Deshalb gleich beide loslassen.
   const setLines = (dtr, rts) => port.setSignals({ dataTerminalReady: dtr, requestToSend: rts }).catch(() => {});
-  await setLines(false, false);
+  // Nur ESP32 (Espressif, 0x303a): DTR loslassen. Beim nRF52 sendet die Firmware nur, solange DTR gesetzt ist.
+  const isEsp = port.getInfo().usbVendorId === 0x303a;
+  await (isEsp ? setLines(false, false) : setLines(true, false));
   try {
     // Beim ersten Start nach dem Flashen formatiert der Node seinen Speicher und legt eine Identität an.
     // Das kann deutlich länger dauern als ein normaler Start, daher bis zu 20 Sekunden warten.
@@ -264,7 +266,7 @@ async function openRNode(port) {
       if (await rnode.detect()) return rnode;
       const rom = await Promise.race([rnode.getRom().catch(() => null), sleep(1500).then(() => null)]);
       if (rom && rom.length >= 0x9c) return rnode;
-      if (!resetTried && Date.now() - start >= 6000) {
+      if (isEsp && !resetTried && Date.now() - start >= 6000) {
         // Keine Antwort: vermutlich steckt der Chip im Download-Modus. Einmal sauber in die Firmware neu starten.
         resetTried = true;
         log("Keine Antwort, starte den Node einmal neu …");
