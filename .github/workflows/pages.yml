@@ -47,6 +47,12 @@ jobs:
       - name: Bauen
         run: pio run -e ${{ matrix.env }}
 
+      - name: Seiten-Skript auf Fehler prüfen
+        if: matrix.env == 'seeed_xiao_esp32s3'
+        run: |
+          cp site/app.js "$RUNNER_TEMP/app.mjs"
+          node --check "$RUNNER_TEMP/app.mjs"
+
       - name: Ergebnisse einsammeln
         run: tools/collect_firmware.sh ${{ matrix.env }} out/firmware
 
