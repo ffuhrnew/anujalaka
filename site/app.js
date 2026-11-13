@@ -244,8 +244,28 @@ const withTimeout = (promise, ms, msg) =>
   Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))]);
 const closeQuiet = (rnode) => withTimeout(rnode.close(), 3000, "close").catch(() => {});
 
+// nRF52 (RAK4631, XIAO nRF52840): eigener Weg. Die Firmware sendet über USB nur, solange DTR gesetzt ist.
+async function openRNodeNrf(port) {
+  const rnode = await withTimeout(RNode.fromSerialPort(port), 8000, "Der Port lässt sich nicht öffnen.");
+  await port.setSignals({ dataTerminalReady: true, requestToSend: false }).catch(() => {});
+  try {
+    const start = Date.now();
+    while (Date.now() - start < 20000) {
+      if (await rnode.detect()) return rnode;
+      const rom = await Promise.race([rnode.getRom().catch(() => null), sleep(1500).then(() => null)]);
+      if (rom && rom.length >= 0x9c) return rnode;
+      await sleep(500);
+    }
+    throw new Error("Das gewählte Gerät meldet sich nicht als RNode.");
+  } catch (e) {
+    await closeQuiet(rnode);
+    throw e;
+  }
+}
+
 async function openRNode(port) {
   port = port || await pickPort();
+  if (port.getInfo().usbVendorId !== 0x303a) return openRNodeNrf(port);   // nicht Espressif: nRF-Weg
   // Rohdaten mitschreiben: Die Firmware gibt beim Start Textzeilen aus, die zeigen, wo sie gerade steht.
   let raw = [], rawCount = 0;
   RNode.rawTap = (chunk) => { rawCount += chunk.length; raw.push(...chunk); if (raw.length > 4000) raw = raw.slice(-4000); };
