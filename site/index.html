@@ -96,11 +96,11 @@
 
     <div id="steps-nrf" class="hidden">
       <ol class="steps">
-        <li>Board per USB anstecken und in den DFU-Modus bringen: Knopf unten klicken (und Port wählen) <em>oder</em> Reset-Taste zweimal schnell drücken.</li>
-        <li>Auf „Flashen“ klicken und den Port des Boards im DFU-Modus wählen. Er ist ein anderer Eintrag als vorher.</li>
+        <li>Board per USB anstecken. Ein Knopfdruck am Board ist nicht nötig, die Seite schaltet den Update-Modus selbst ein.</li>
+        <li>Auf „Flashen“ klicken und den Port des Boards wählen.</li>
+        <li>Nur beim allerersten Mal verlangt der Browser eine zweite Auswahl, weil sich das Board im Update-Modus als neues USB-Gerät meldet. Dann noch einmal „Flashen“ klicken und den Port wählen.</li>
       </ol>
       <div class="row">
-        <button id="btn-dfu" class="secondary">In DFU-Modus versetzen</button>
         <button id="btn-flash-nrf">Flashen</button>
         <a id="btn-uf2" class="btn secondary hidden" href="firmware/xiao_nrf52840.uf2" download>UF2-Datei laden</a>
       </div>

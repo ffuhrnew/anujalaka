@@ -186,14 +186,34 @@ async function flashEsp32() {
   log("Danach: Schritt 3 (Firmware-Hash setzen" + (full ? ", vorher EEPROM einrichten" : "") + ").");
 }
 
-async function enterDfu() {
-  const port = await pickPort();
+// Versetzt das Board per Software in den Update-Modus (Port kurz mit 1200 Baud öffnen und schließen)
+// und liefert den Port, über den geflasht wird. Im Update-Modus meldet sich das Board unter einer anderen
+// USB-Kennung. Hat der Browser diese Kennung noch nie gesehen, darf die Seite sie nur nach einer neuen Auswahl
+// durch den Nutzer öffnen: dann kommt null zurück (einmalig, danach ist sie bekannt).
+async function toDfuPort(port) {
+  const vid = port.getInfo().usbVendorId;
+  let gone = false, fresh = null;
+  const onGone = (e) => { if (e.target === port) gone = true; };
+  const onNew = (e) => { if (e.target && e.target !== port && e.target.getInfo().usbVendorId === vid) fresh = e.target; };
+  navigator.serial.addEventListener("disconnect", onGone);
+  navigator.serial.addEventListener("connect", onNew);
   try {
-    await new Nrf52DfuFlasher(port).enterDfuMode();
+    log("Board wird in den Update-Modus versetzt …");
+    await new Nrf52DfuFlasher(port).enterDfuMode();   // wartet selbst 1,5 s
+    for (let i = 0; i < 20; i++) {
+      if (!gone && i >= 3) return port;                // meldet sich nicht ab: war schon im Update-Modus
+      if (gone) {
+        const ports = await navigator.serial.getPorts();
+        const cand = fresh || ports.find((p) => p !== port && p.getInfo().usbVendorId === vid);
+        if (cand) return cand;
+      }
+      await sleep(400);
+    }
+    return null;
   } finally {
-    await releasePort(port);
+    navigator.serial.removeEventListener("disconnect", onGone);
+    navigator.serial.removeEventListener("connect", onNew);
   }
-  log("Board sollte jetzt im DFU-Modus sein. Als Nächstes „Flashen“.");
 }
 
 async function flashNrf() {
@@ -201,9 +221,17 @@ async function flashNrf() {
   const port = await pickPort();   // zuerst, solange die Klick-Erlaubnis gilt
   const bytes = await fetchBytes(b.zip);
   log(b.zip.split("/").pop() + ": " + bytes.length + " Bytes");
+  let target = null;
   try {
-    await new Nrf52DfuFlasher(port).flash(new Blob([bytes]), (pct) => setProgress(Math.floor(pct)));
+    target = await toDfuPort(port);
+    if (!target) {
+      throw new Error("Das Board ist im Update-Modus, meldet sich aber unter einer neuen USB-Kennung. " +
+        "Einmalig: noch einmal auf „Flashen“ klicken und den Port des Boards wählen. Danach geht es ohne zweite Auswahl.");
+    }
+    log("Flashen …");
+    await new Nrf52DfuFlasher(target).flash(new Blob([bytes]), (pct) => setProgress(Math.floor(pct)));
   } finally {
+    if (target && target !== port) await releasePort(target);
     await releasePort(port);
   }
   log("Danach: Schritt 3 (Firmware-Hash setzen" + (mode() === "full" ? ", vorher EEPROM einrichten" : "") + ").");
@@ -443,7 +471,6 @@ if (!("serial" in navigator)) {
   document.querySelectorAll("button").forEach((b) => (b.disabled = true));
 } else {
   $("btn-flash-esp32").onclick = () => run("Flashen (ESP32-S3)", flashEsp32);
-  $("btn-dfu").onclick = () => run("DFU-Modus", enterDfu);
   $("btn-flash-nrf").onclick = () => run("Flashen (nRF52)", flashNrf);
   $("btn-wipe").onclick = () => run("EEPROM leeren", wipeEeprom);
   $("btn-provision").onclick = () => run("EEPROM einrichten", provisionEeprom);
