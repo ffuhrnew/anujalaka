@@ -319,16 +319,24 @@ async function provisionEeprom() {
 // nächsten Start. Nullen werden deshalb nie eingetragen, sondern es wird auf den echten Wert gewartet.
 const isZeroHash = (h) => h.every((b) => b === 0);
 
+// Befehl mit Zeitgrenze und Wiederholung: eine verlorene Antwort darf den Ablauf nicht für immer blockieren.
+async function askRetry(fn, what) {
+  for (let i = 0; i < 6; i++) {
+    try { return await withTimeout(fn(), 3000, "keine Antwort"); } catch (_) { await sleep(300); }
+  }
+  throw new Error("Der Node antwortet nicht auf: " + what + ".");
+}
+
 async function applyFirmwareHash(rnode) {
-  let actual = await rnode.getFirmwareHash();
+  let actual = await askRetry(() => rnode.getFirmwareHash(), "Firmware-Hash lesen");
   for (let i = 0; i < 10 && isZeroHash(actual); i++) {
     await sleep(1000);
-    actual = await rnode.getFirmwareHash();
+    actual = await askRetry(() => rnode.getFirmwareHash(), "Firmware-Hash lesen");
   }
   if (isZeroHash(actual)) throw new Error("Der Node meldet noch keinen Firmware-Hash. Board neu anstecken und Schritt c ausführen.");
   await rnode.setFirmwareHash(actual);
   await sleep(2000);
-  const target = await rnode.getTargetFirmwareHash();
+  const target = await askRetry(() => rnode.getTargetFirmwareHash(), "gespeicherten Hash lesen");
   if (hex(target) !== hex(actual)) {
     throw new Error("Hash nicht übernommen. Erwartet " + hex(actual) + ", gespeichert " + hex(target) + ".");
   }
@@ -361,6 +369,7 @@ async function reopenAfterReset(oldPort, watch) {
         || (waited > 10000 ? ports.find(watch.same) : null);   // kein Neuanmelden bemerkt: altes Objekt versuchen
       if (!cand) continue;
       if (!noted) { log("Node ist wieder da, öffne die Verbindung …"); noted = true; }
+      log("Öffne …");
       try {
         return await withTimeout(openRNode(cand), 40000, "Zeitüberschreitung beim Öffnen.");
       } catch (e) {
