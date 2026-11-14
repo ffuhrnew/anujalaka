@@ -33,7 +33,6 @@ let btTimer = null;
 let logPristine = true;                         // noch nichts protokolliert: "Bereit." folgt der Sprache
 let btStatusState = { key: "bt.status.idle" };  // letzter Bluetooth-Status, wird bei Sprachwechsel neu gesetzt
 let fwState = { key: "fw.loading" };
-const BT_PIN_WAIT_MS = 5000;      // so lange wartet die Seite auf den PIN
 const BT_PAIRING_WINDOW_S = 35;   // BT_PAIRING_TIMEOUT der Firmware (Bluetooth.h)
 
 function log(text, cls) {
@@ -375,30 +374,26 @@ async function bluetoothPair() {
   const rnode = await btOpen();
   btHidePin();
   btStatus("bt.starting");
-  let gotPin;
-  const pinPromise = new Promise((resolve) => { gotPin = resolve; });
-  await rnode.startBluetoothPairing(gotPin);
-  let pin;
-  try {
-    pin = await withTimeout(pinPromise, BT_PIN_WAIT_MS, t("err.nopin"));
-  } catch (e) {
-    delete rnode.callbacks[rnode.CMD_BT_PIN];
-    btStatus("bt.nopin");
-    throw e;
-  }
-  $("bt-pin").textContent = String(pin).padStart(6, "0");
-  $("bt-pin-wrap").classList.remove("hidden");
-  log(t("log.pin", { pin }), "ok");
-  let left = BT_PAIRING_WINDOW_S;
+  let pinShown = false;
   const tick = () => {
     if (left <= 0) {
       btHidePin();
       btStatus("bt.window.expired");
       return;
     }
-    btStatus("bt.window.left", { n: left });
+    btStatus(pinShown ? "bt.window.left" : "bt.window.wait", { n: left });
     left--;
   };
+  let left = BT_PAIRING_WINDOW_S;
+  // Der nRF52 meldet den PIN sofort. Die ESP32-Firmware meldet ihn erst, wenn das Smartphone koppeln will
+  // (innerhalb des Pairing-Fensters). Deshalb wird er angezeigt, sobald er kommt, und nicht nach fester Zeit erwartet.
+  await rnode.startBluetoothPairing((pin) => {
+    pinShown = true;
+    $("bt-pin").textContent = String(pin).padStart(6, "0");
+    $("bt-pin-wrap").classList.remove("hidden");
+    log(t("log.pin", { pin }), "ok");
+    tick();
+  });
   tick();
   btTimer = setInterval(tick, 1000);
 }
