@@ -15,6 +15,14 @@ EXPECTED = [
     "xiao_esp32s3/firmware.bin",
 ]
 
+# Optionale Boards: nur aufnehmen, wenn ihr Bau gelungen ist. Fehlen sie, fehlt das Board im Flasher, der Rest bleibt.
+OPTIONAL = [
+    "heltec_v3/bootloader.bin",
+    "heltec_v3/partitions.bin",
+    "heltec_v3/boot_app0.bin",
+    "heltec_v3/firmware.bin",
+]
+
 def main():
     root, commit = sys.argv[1], sys.argv[2]
     files = {}
@@ -23,6 +31,12 @@ def main():
         if not os.path.isfile(path):
             sys.exit("FEHLER: %s fehlt" % rel)
         data = open(path, "rb").read()
+        files[rel] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    optional = [r for r in OPTIONAL if os.path.isfile(os.path.join(root, r))]
+    if 0 < len(optional) < len(OPTIONAL):   # halbes Board: gar nicht anbieten
+        optional = []
+    for rel in optional:
+        data = open(os.path.join(root, rel), "rb").read()
         files[rel] = {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
     manifest = {
         "commit": commit,

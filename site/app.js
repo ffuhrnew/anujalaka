@@ -20,6 +20,31 @@ const BOARDS = {
       { address: 0x10000, path: "firmware/xiao_esp32s3/firmware.bin" },
     ],
   },
+  // Heltec LoRa32 V3 (ESP32-S3, 8 MB): Produkt 0xC1, Modell 0xCA (868/915 MHz) oder 0xC5 (433 MHz). Ungetestet.
+  heltec_v3: {
+    kind: "esp32",
+    product: 0xC1,
+    model: 0xCA,
+    flashSize: "8MB",
+    files: [
+      { address: 0x0,     path: "firmware/heltec_v3/bootloader.bin" },
+      { address: 0x8000,  path: "firmware/heltec_v3/partitions.bin" },
+      { address: 0xe000,  path: "firmware/heltec_v3/boot_app0.bin" },
+      { address: 0x10000, path: "firmware/heltec_v3/firmware.bin" },
+    ],
+  },
+  heltec_v3_433: {
+    kind: "esp32",
+    product: 0xC1,
+    model: 0xC5,
+    flashSize: "8MB",
+    files: [
+      { address: 0x0,     path: "firmware/heltec_v3/bootloader.bin" },
+      { address: 0x8000,  path: "firmware/heltec_v3/partitions.bin" },
+      { address: 0xe000,  path: "firmware/heltec_v3/boot_app0.bin" },
+      { address: 0x10000, path: "firmware/heltec_v3/firmware.bin" },
+    ],
+  },
   xiao_nrf52840: { kind: "nrf52", product: 0x10, model: 0x12, zip: "firmware/xiao_nrf52840.zip", uf2: "firmware/xiao_nrf52840.uf2" },
   rak4631:       { kind: "nrf52", product: 0x10, model: 0x12, zip: "firmware/rak4631.zip" },
 };
@@ -599,10 +624,25 @@ function updateView() {
 
 const renderFwInfo = () => { $("fwinfo").textContent = t(fwState.key, fwState.params); };
 
+// Boards, deren Firmware beim Bau nicht entstanden ist (nicht im manifest.json), werden nicht angeboten.
+function filterBoards(m) {
+  if (!m.files) return;
+  for (const [key, b] of Object.entries(BOARDS)) {
+    const el = $("choice-" + key);
+    const first = b.files ? b.files[0].path : b.zip;
+    if (el && first && !m.files[first.replace(/^firmware\//, "")]) {
+      el.classList.add("hidden");
+      if (el.querySelector("input").checked) document.querySelector('input[name="board"]').checked = true;
+    }
+  }
+  updateView();
+}
+
 async function loadManifest() {
   try {
     const m = await (await fetch("firmware/manifest.json", { cache: "no-cache" })).json();
     fwState = { key: "fw.info", params: { commit: m.commit.slice(0, 7), built: m.built.replace("T", " ").replace("Z", "") } };
+    filterBoards(m);
   } catch (_) {
     fwState = { key: "fw.unknown" };
   }

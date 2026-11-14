@@ -24,10 +24,15 @@ jobs:
   build:
     name: Build ${{ matrix.env }}
     runs-on: ubuntu-latest
+    # Optionale Boards (Heltec V3): scheitert ihr Bau, wird die Seite trotzdem veröffentlicht, nur ohne dieses Board.
+    continue-on-error: ${{ matrix.optional == true }}
     strategy:
       fail-fast: false
       matrix:
         env: [wiscore_rak4631, xiao_nrf52840, seeed_xiao_esp32s3]
+        include:
+          - env: heltec_wifi_lora_32_V3
+            optional: true
     steps:
       - uses: actions/checkout@v4
 

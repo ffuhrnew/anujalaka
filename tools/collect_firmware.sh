@@ -32,6 +32,19 @@ case "$env" in
     [ -f "$boot" ] || { echo "FEHLER: boot_app0.bin nicht gefunden" >&2; exit 1; }
     cp "$boot" "$d/boot_app0.bin"
     ;;
+  heltec_wifi_lora_32_V3)
+    d="$out/heltec_v3"; mkdir -p "$d"
+    fw=$(ls -t "$B"/rnode_firmware_*.bin 2>/dev/null | head -1 || true)
+    [ -n "$fw" ] || fw="$B/firmware.bin"
+    [ -f "$fw" ] || { echo "FEHLER: keine Firmware-Datei in $B" >&2; exit 1; }
+    cp "$fw" "$d/firmware.bin"
+    cp "$B/bootloader.bin" "$d/bootloader.bin"
+    cp "$B/partitions.bin" "$d/partitions.bin"
+    boot=$(ls "$B"/rnode_firmware_*.boot_app0 2>/dev/null | head -1 || true)
+    [ -n "$boot" ] || boot="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+    [ -f "$boot" ] || { echo "FEHLER: boot_app0.bin nicht gefunden" >&2; exit 1; }
+    cp "$boot" "$d/boot_app0.bin"
+    ;;
   *)
     echo "FEHLER: unbekanntes Environment $env" >&2; exit 1
     ;;
