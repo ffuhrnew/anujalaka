@@ -3,6 +3,7 @@
 // vendor/esptool-js und zip.js aus liamcottle/rnode-flasher (MIT).
 import { ESPLoader, Transport } from "./vendor/esptool-js/bundle.js";
 import { patchOtaPassword, checkPassword } from "./espimage.js";
+import { t, getLang, initLang, setLang, applyStatic } from "./i18n.js";
 
 // Werte wie in flash-node.sh: RAK4631 und XIAO nRF52840 werden als RAK4631 eingetragen (Produkt 0x10, Modell 0x12),
 // der XIAO ESP32-S3 als Produkt 0xEB, Modell 0xDD.
@@ -27,10 +28,18 @@ const $ = (id) => document.getElementById(id);
 const logEl = $("log");
 const progressEl = $("progress");
 let busy = false;
+let btSession = null;   // offene USB-Verbindung zum Board, solange die Bluetooth-Karte benutzt wird
+let btTimer = null;
+let logPristine = true;                         // noch nichts protokolliert: "Bereit." folgt der Sprache
+let btStatusState = { key: "bt.status.idle" };  // letzter Bluetooth-Status, wird bei Sprachwechsel neu gesetzt
+let fwState = { key: "fw.loading" };
+const BT_PIN_WAIT_MS = 5000;      // so lange wartet die Seite auf den PIN
+const BT_PAIRING_WINDOW_S = 35;   // BT_PAIRING_TIMEOUT der Firmware (Bluetooth.h)
 
 function log(text, cls) {
   const line = document.createElement("div");
-  line.textContent = new Date().toLocaleTimeString("de-DE") + "  " + text;
+  logPristine = false;
+  line.textContent = new Date().toLocaleTimeString(getLang() === "de" ? "de-DE" : "en-GB") + "  " + text;
   if (cls) line.className = cls;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
@@ -43,22 +52,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const board = () => BOARDS[document.querySelector('input[name="board"]:checked').value];
 const mode = () => document.querySelector('input[name="mode"]:checked').value;
 
+function updateButtons() {
+  document.querySelectorAll("button").forEach((b) => {
+    if (b.id.startsWith("lang-")) return;   // Sprachwahl bleibt immer bedienbar
+    let off = false;
+    if (b.id === "btn-bt-close") off = !btSession;
+    else if (!b.id.startsWith("btn-bt-")) off = !!btSession;   // Flashen und Einrichten brauchen denselben Port
+    b.disabled = busy || off;
+  });
+}
+
 function setBusy(on) {
   busy = on;
-  document.querySelectorAll("button").forEach((b) => (b.disabled = on));
+  updateButtons();
 }
 
 // Jede Aktion läuft über run(): ein Vorgang gleichzeitig, Fehler landen im Protokoll.
-async function run(title, fn) {
+async function run(titleKey, fn) {
   if (busy) return;
+  const title = t(titleKey);
   setBusy(true);
   log("→ " + title);
   try {
     await fn();
-    log("✓ " + title + " fertig", "ok");
+    log("✓ " + t("log.done", { title }), "ok");
   } catch (e) {
-    if (e && e.name === "NotFoundError") log("Kein Port gewählt, abgebrochen.");
-    else log("✗ " + title + " fehlgeschlagen: " + (e && e.message ? e.message : e), "err");
+    if (e && e.name === "NotFoundError") log(t("log.noport"));
+    else log("✗ " + t("log.failed", { title, msg: e && e.message ? e.message : e }), "err");
     console.error(e);
   } finally {
     setProgress(null);
@@ -80,7 +100,7 @@ const hex = (bytes) => Array.from(bytes || [], (b) => b.toString(16).padStart(2,
 
 async function fetchBytes(path) {
   const res = await fetch(path, { cache: "no-cache" });
-  if (!res.ok) throw new Error(path + " nicht gefunden (HTTP " + res.status + "). Wurde die Firmware schon gebaut?");
+  if (!res.ok) throw new Error(t("err.notfound", { path, status: res.status }));
   return new Uint8Array(await res.arrayBuffer());
 }
 
@@ -112,24 +132,24 @@ function espTerminal() {
 // dann mit dem automatischen Reset von esptool-js (für Boards, die noch die Firmware ausführen).
 async function connectEsp32(port, baudrate) {
   const attempts = [
-    ["default_reset", "Verbindung mit automatischem Reset"],
+    ["default_reset", "log.attempt"],
   ];
   for (const [resetMode, label] of attempts) {
     const terminal = espTerminal();
     const transport = new Transport(port, false);
     const loader = new ESPLoader({ transport, baudrate, terminal });
-    log(label + " …");
+    log(t(label) + " …");
     try {
       await loader.main(resetMode);
       terminal.flush();
       return { transport, loader };
     } catch (e) {
       terminal.flush();
-      log("Nicht verbunden: " + (e && e.message ? e.message : e));
+      log(t("log.notconn", { msg: e && e.message ? e.message : e }));
       try { await transport.disconnect(); } catch (_) { /* schon zu */ }
     }
   }
-  throw new Error("Keine Verbindung zum Chip. Prüfe, ob das Board im Download-Modus ist: USB abziehen, BOOT-Knopf gedrückt halten, USB einstecken, erst dann loslassen. Dann nochmal Flashen.");
+  throw new Error(t("err.noconn"));
 }
 
 async function flashEsp32() {
@@ -143,8 +163,8 @@ async function flashEsp32() {
     const problem = checkPassword(password);
     if (problem) throw new Error(problem);
   }
-  if (full && !confirm("„Neu einrichten“ löscht den ganzen Flash des Nodes (Einstellungen, Identität, Zugriffsliste). Fortfahren?")) {
-    throw new Error("abgebrochen");
+  if (full && !confirm(t("confirm.full"))) {
+    throw new Error(t("err.cancelled"));
   }
   const fileArray = [];
   for (const f of b.files) {
@@ -152,12 +172,12 @@ async function flashEsp32() {
     if (password && f.path.endsWith("/firmware.bin")) {
       // Passwort in die Firmware eintragen, Prüfsumme und Hash werden dabei neu berechnet
       bytes = await patchOtaPassword(bytes, password);
-      log("Update-Passwort eingetragen.");
+      log(t("log.pwset"));
     }
-    log(f.path.split("/").pop() + ": " + bytes.length + " Bytes");
+    log(t("log.bytes", { name: f.path.split("/").pop(), n: bytes.length }));
     fileArray.push({ address: f.address, data: toBinaryString(bytes) });
   }
-  if (!password) log("Kein Update-Passwort angegeben: das WLAN-Update-Fenster bleibt gesperrt.");
+  if (!password) log(t("log.nopw"));
   let transport;
   try {
     const conn = await connectEsp32(port, 921600);
@@ -178,12 +198,12 @@ async function flashEsp32() {
     // DTR/RTS loslassen: bleibt DTR gesetzt, hält der Chip beim nächsten Neustart GPIO0 auf Low
     // und landet im Download-Modus statt in der Firmware.
     try { await transport.setDTR(false); await transport.setRTS(false); } catch (_) { /* egal */ }
-    log("Falls das Board nicht von selbst startet: kurz USB abziehen und wieder einstecken.");
+    log(t("log.nostart"));
   } finally {
     if (transport) { try { await transport.disconnect(); } catch (_) { /* Port war schon zu */ } }
     await releasePort(port);
   }
-  log("Danach: Schritt 3 (Firmware-Hash setzen" + (full ? ", vorher EEPROM einrichten" : "") + ").");
+  log(t("log.next", { full: full ? t("log.next.full") : "" }));
 }
 
 // Versetzt das Board per Software in den Update-Modus (Port kurz mit 1200 Baud öffnen und schließen)
@@ -198,7 +218,7 @@ async function toDfuPort(port) {
   navigator.serial.addEventListener("disconnect", onGone);
   navigator.serial.addEventListener("connect", onNew);
   try {
-    log("Board wird in den Update-Modus versetzt …");
+    log(t("log.dfu"));
     await new Nrf52DfuFlasher(port).enterDfuMode();   // wartet selbst 1,5 s
     for (let i = 0; i < 20; i++) {
       if (!gone && i >= 3) return port;                // meldet sich nicht ab: war schon im Update-Modus
@@ -220,21 +240,20 @@ async function flashNrf() {
   const b = board();
   const port = await pickPort();   // zuerst, solange die Klick-Erlaubnis gilt
   const bytes = await fetchBytes(b.zip);
-  log(b.zip.split("/").pop() + ": " + bytes.length + " Bytes");
+  log(t("log.bytes", { name: b.zip.split("/").pop(), n: bytes.length }));
   let target = null;
   try {
     target = await toDfuPort(port);
     if (!target) {
-      throw new Error("Das Board ist im Update-Modus, meldet sich aber unter einer neuen USB-Kennung. " +
-        "Einmalig: noch einmal auf „Flashen“ klicken und den Port des Boards wählen. Danach geht es ohne zweite Auswahl.");
+      throw new Error(t("err.newid"));
     }
-    log("Flashen …");
+    log(t("log.flashing"));
     await new Nrf52DfuFlasher(target).flash(new Blob([bytes]), (pct) => setProgress(Math.floor(pct)));
   } finally {
     if (target && target !== port) await releasePort(target);
     await releasePort(port);
   }
-  log("Danach: Schritt 3 (Firmware-Hash setzen" + (mode() === "full" ? ", vorher EEPROM einrichten" : "") + ").");
+  log(t("log.next", { full: mode() === "full" ? t("log.next.full") : "" }));
 }
 
 // ---- Nach dem Flashen ------------------------------------------------------
@@ -246,7 +265,7 @@ const closeQuiet = (rnode) => withTimeout(rnode.close(), 3000, "close").catch(()
 
 // nRF52 (RAK4631, XIAO nRF52840): eigener Weg. Die Firmware sendet über USB nur, solange DTR gesetzt ist.
 async function openRNodeNrf(port) {
-  const rnode = await withTimeout(RNode.fromSerialPort(port), 8000, "Der Port lässt sich nicht öffnen.");
+  const rnode = await withTimeout(RNode.fromSerialPort(port), 8000, t("err.portopen"));
   await port.setSignals({ dataTerminalReady: true, requestToSend: false }).catch(() => {});
   try {
     const start = Date.now();
@@ -256,7 +275,7 @@ async function openRNodeNrf(port) {
       if (rom && rom.length >= 0x9c) return rnode;
       await sleep(500);
     }
-    throw new Error("Das gewählte Gerät meldet sich nicht als RNode.");
+    throw new Error(t("err.noanswer"));
   } catch (e) {
     await closeQuiet(rnode);
     throw e;
@@ -269,7 +288,7 @@ async function openRNode(port) {
   // Rohdaten mitschreiben: Die Firmware gibt beim Start Textzeilen aus, die zeigen, wo sie gerade steht.
   let raw = [], rawCount = 0;
   RNode.rawTap = (chunk) => { rawCount += chunk.length; raw.push(...chunk); if (raw.length > 4000) raw = raw.slice(-4000); };
-  const rnode = await withTimeout(RNode.fromSerialPort(port), 8000, "Der Port lässt sich nicht öffnen.");
+  const rnode = await withTimeout(RNode.fromSerialPort(port), 8000, t("err.portopen"));
   // Der Browser setzt beim Öffnen DTR und RTS. Auf dem ESP32-S3 (USB-Serial-JTAG) führt das beim nächsten Neustart
   // in den Download-Modus: das Board schweigt dann, die Firmware läuft nicht. Deshalb gleich beide loslassen.
   const setLines = (dtr, rts) => port.setSignals({ dataTerminalReady: dtr, requestToSend: rts }).catch(() => {});
@@ -287,21 +306,21 @@ async function openRNode(port) {
       if (!resetTried && Date.now() - start >= 6000) {
         // Keine Antwort: vermutlich steckt der Chip im Download-Modus. Einmal sauber in die Firmware neu starten.
         resetTried = true;
-        log("Keine Antwort, starte den Node einmal neu …");
+        log(t("log.noanswer.reset"));
         await setLines(false, true);
         await sleep(200);
         await setLines(false, false);
         await sleep(1500);
       }
       if (Date.now() - start >= nextNote) {
-        log("Warte auf den Node … " + Math.round((Date.now() - start) / 1000) + " s, " + rawCount + " Bytes empfangen");
+        log(t("log.waiting", { s: Math.round((Date.now() - start) / 1000), n: rawCount }));
         nextNote += 10000;
       }
       await sleep(500);
     }
     const text = new TextDecoder().decode(new Uint8Array(raw)).replace(/[^\x20-\x7e\r\n]/g, "·").trim();
-    log("Empfangen vom Board (" + rawCount + " Bytes, letzte Ausgabe):\n" + (text.slice(-800) || "(nichts)"));
-    throw new Error("Das gewählte Gerät meldet sich nicht als RNode.");
+    log(t("log.received", { n: rawCount, text: text.slice(-800) || t("log.nothing") }));
+    throw new Error(t("err.noanswer"));
   } catch (e) {
     await closeQuiet(rnode);
     throw e;
@@ -310,14 +329,122 @@ async function openRNode(port) {
   }
 }
 
+// ---- Bluetooth -------------------------------------------------------------
+// Die Firmware erzeugt den PIN beim Befehl "Pairing starten" (nicht erst, wenn das Smartphone fragt) und hält das
+// Pairing-Fenster 35 Sekunden offen. Die USB-Verbindung bleibt offen, bis sie getrennt wird.
+
+const renderBtStatus = () => { $("bt-status").textContent = t(btStatusState.key, btStatusState.params); };
+const btStatus = (key, params) => { btStatusState = { key, params }; renderBtStatus(); };
+
+function btHidePin() {
+  clearInterval(btTimer);
+  $("bt-pin-wrap").classList.add("hidden");
+  $("bt-pin").textContent = "------";
+}
+
+function btOnDisconnect(e) {
+  if (!btSession || e.target !== btSession.serialPort) return;
+  const rnode = btSession;
+  btEnd("bt.lost");
+  btClose(rnode);   // Leser und Port freigeben, sonst bleibt der alte Port belegt
+}
+
+function btEnd(key, params) {
+  btSession = null;
+  navigator.serial.removeEventListener("disconnect", btOnDisconnect);
+  btHidePin();
+  btStatus(key, params);
+  updateButtons();
+}
+
+async function btOpen() {
+  if (btSession) return btSession;
+  const port = await pickPort();   // zuerst, solange die Klick-Erlaubnis gilt
+  btSession = await openRNode(port);
+  navigator.serial.addEventListener("disconnect", btOnDisconnect);
+  updateButtons();
+  return btSession;
+}
+
+async function btClose(rnode) {
+  delete rnode.callbacks[rnode.CMD_BT_PIN];
+  await closeQuiet(rnode);
+}
+
+async function bluetoothPair() {
+  const rnode = await btOpen();
+  btHidePin();
+  btStatus("bt.starting");
+  let gotPin;
+  const pinPromise = new Promise((resolve) => { gotPin = resolve; });
+  await rnode.startBluetoothPairing(gotPin);
+  let pin;
+  try {
+    pin = await withTimeout(pinPromise, BT_PIN_WAIT_MS, t("err.nopin"));
+  } catch (e) {
+    delete rnode.callbacks[rnode.CMD_BT_PIN];
+    btStatus("bt.nopin");
+    throw e;
+  }
+  $("bt-pin").textContent = String(pin).padStart(6, "0");
+  $("bt-pin-wrap").classList.remove("hidden");
+  log(t("log.pin", { pin }), "ok");
+  let left = BT_PAIRING_WINDOW_S;
+  const tick = () => {
+    if (left <= 0) {
+      btHidePin();
+      btStatus("bt.window.expired");
+      return;
+    }
+    btStatus("bt.window.left", { n: left });
+    left--;
+  };
+  tick();
+  btTimer = setInterval(tick, 1000);
+}
+
+async function bluetoothClose() {
+  if (!btSession) return;
+  await btClose(btSession);
+  btEnd("bt.closed");
+}
+
+// Schaltet Bluetooth am Board ein und speichert "an" (die Firmware sendet sofort).
+async function bluetoothOn() {
+  const rnode = await btOpen();
+  try {
+    await rnode.enableBluetooth();
+    await sleep(1500);   // Zustand ins Board schreiben lassen
+  } finally {
+    await btClose(rnode);
+    btEnd("bt.on.done");
+  }
+}
+
+// Schaltet Bluetooth am Board aus und speichert "aus". Die nRF52-Firmware hört danach nicht sofort auf zu senden,
+// erst ein Neustart beendet es: deshalb startet die Seite das Board nach dem Speichern neu.
+async function bluetoothOff() {
+  const rnode = await btOpen();
+  try {
+    await rnode.disableBluetooth();
+    await sleep(1500);   // Zustand ins Board schreiben lassen, bevor es neu startet
+    navigator.serial.removeEventListener("disconnect", btOnDisconnect);   // der Neustart trennt USB absichtlich
+    log(t("log.btrestart"));
+    try { await withTimeout(rnode.reset(), 3000, "reset"); } catch (_) { /* hat sich vielleicht schon selbst neu gestartet */ }
+  } finally {
+    await btClose(rnode);
+    btEnd("bt.off.done");
+  }
+}
+
 async function wipeEeprom() {
   const port = await pickPort();   // zuerst, solange die Klick-Erlaubnis gilt
-  if (!confirm("Das löscht den EEPROM des Nodes (Gerätedaten und Funk-Einstellungen). Fortfahren?")) throw new Error("abgebrochen");
+  if (!confirm(t("confirm.wipe"))) throw new Error(t("err.cancelled"));
   const rnode = await openRNode(port);
-  log("EEPROM wird geleert, das dauert bis zu 30 Sekunden …");
+  log(t("log.wiping"));
   await rnode.wipeRom();
   await rnode.close();
-  log("Danach Board kurz neu anstecken, dann Schritt b.");
+  log(t("log.wiped"));
 }
 
 async function provisionEeprom() {
@@ -325,7 +452,7 @@ async function provisionEeprom() {
   const rnode = await openRNode();
   try {
     const rom = await rnode.getRomAsObject();
-    if (rom.parse()) throw new Error("Der EEPROM ist schon eingerichtet. Erst Schritt a (EEPROM leeren).");
+    if (rom.parse()) throw new Error(t("err.eeprom.done"));
     const hwRev = 0x1;
     const serial = Utils.packUInt32BE(1);
     const made = Utils.packUInt32BE(Math.floor(Date.now() / 1000));
@@ -341,15 +468,15 @@ async function provisionEeprom() {
     await sleep(2000); // EEPROM-Schreibvorgänge abwarten
     const back = (await rnode.getRomAsObject()).parse();
     if (!back || !back.is_provisioned || back.product !== b.product || back.model !== b.model) {
-      throw new Error("Beim Zurücklesen stimmen die Werte nicht: " + JSON.stringify(back) + ". Erst Schritt a (EEPROM leeren), dann nochmal b.");
+      throw new Error(t("err.readback", { info: JSON.stringify(back) }));
     }
-    log("Zurückgelesen: Produkt 0x" + back.product.toString(16) + ", Modell 0x" + back.model.toString(16) + ", Prüfsumme stimmt.");
+    log(t("log.readback", { product: back.product.toString(16), model: back.model.toString(16) }));
     // Die Firmware berechnet ihren Hash erst nach einem Neustart: neu starten, denselben Port wieder öffnen, Hash setzen.
     const port = rnode.serialPort;
     const watch = watchReconnect(port);
     try { await withTimeout(rnode.reset(), 3000, "reset"); } catch (_) { /* hat sich vielleicht schon selbst neu gestartet */ }
     await closeQuiet(rnode);
-    log("Node startet neu, warte auf ihn …");
+    log(t("log.restart"));
     const again = await reopenAfterReset(port, watch);
     try {
       await applyFirmwareHash(again);
@@ -359,7 +486,7 @@ async function provisionEeprom() {
   } finally {
     await closeQuiet(rnode);
   }
-  log("Fertig.");
+  log(t("log.finished"));
 }
 
 // Trägt den Hash der laufenden Firmware als erwarteten Wert ein und liest ihn zurück.
@@ -370,25 +497,25 @@ const isZeroHash = (h) => h.every((b) => b === 0);
 // Befehl mit Zeitgrenze und Wiederholung: eine verlorene Antwort darf den Ablauf nicht für immer blockieren.
 async function askRetry(fn, what) {
   for (let i = 0; i < 6; i++) {
-    try { return await withTimeout(fn(), 3000, "keine Antwort"); } catch (_) { await sleep(300); }
+    try { return await withTimeout(fn(), 3000, t("err.timeout.noanswer")); } catch (_) { await sleep(300); }
   }
-  throw new Error("Der Node antwortet nicht auf: " + what + ".");
+  throw new Error(t("err.noreply", { what }));
 }
 
 async function applyFirmwareHash(rnode) {
-  let actual = await askRetry(() => rnode.getFirmwareHash(), "Firmware-Hash lesen");
+  let actual = await askRetry(() => rnode.getFirmwareHash(), t("what.hashread"));
   for (let i = 0; i < 10 && isZeroHash(actual); i++) {
     await sleep(1000);
-    actual = await askRetry(() => rnode.getFirmwareHash(), "Firmware-Hash lesen");
+    actual = await askRetry(() => rnode.getFirmwareHash(), t("what.hashread"));
   }
-  if (isZeroHash(actual)) throw new Error("Der Node meldet noch keinen Firmware-Hash. Board neu anstecken und Schritt c ausführen.");
+  if (isZeroHash(actual)) throw new Error(t("err.nohash"));
   await rnode.setFirmwareHash(actual);
   await sleep(2000);
-  const target = await askRetry(() => rnode.getTargetFirmwareHash(), "gespeicherten Hash lesen");
+  const target = await askRetry(() => rnode.getTargetFirmwareHash(), t("what.savedhash"));
   if (hex(target) !== hex(actual)) {
-    throw new Error("Hash nicht übernommen. Erwartet " + hex(actual) + ", gespeichert " + hex(target) + ".");
+    throw new Error(t("err.hashmismatch", { want: hex(actual), got: hex(target) }));
   }
-  log("Firmware-Hash gesetzt und zurückgelesen: " + hex(actual).slice(0, 16) + " …");
+  log(t("log.hashset", { hash: hex(actual).slice(0, 16) }));
 }
 
 // Merkt sich, wenn das Board nach einem Neustart als neues USB-Gerät wieder auftaucht.
@@ -416,10 +543,10 @@ async function reopenAfterReset(oldPort, watch) {
         || ports.find((p) => p !== oldPort && watch.same(p))
         || (waited > 10000 ? ports.find(watch.same) : null);   // kein Neuanmelden bemerkt: altes Objekt versuchen
       if (!cand) continue;
-      if (!noted) { log("Node ist wieder da, öffne die Verbindung …"); noted = true; }
-      log("Öffne …");
+      if (!noted) { log(t("log.back")); noted = true; }
+      log(t("log.open"));
       try {
-        return await withTimeout(openRNode(cand), 40000, "Zeitüberschreitung beim Öffnen.");
+        return await withTimeout(openRNode(cand), 40000, t("err.opentimeout"));
       } catch (e) {
         lastErr = e && e.message ? e.message : String(e);
         watch.port = null;
@@ -428,15 +555,14 @@ async function reopenAfterReset(oldPort, watch) {
   } finally {
     watch.stop();
   }
-  throw new Error("Der Node ist nach dem Neustart nicht wieder erreichbar" + (lastErr ? " (" + lastErr + ")" : "") +
-    ". Board neu anstecken und Schritt c ausführen.");
+  throw new Error(t("err.noreturn", { detail: lastErr ? " (" + lastErr + ")" : "" }));
 }
 
 async function setFirmwareHash() {
   const rnode = await openRNode();
   try {
     const details = (await rnode.getRomAsObject()).parse();
-    if (!details || !details.is_provisioned) throw new Error("Der EEPROM ist nicht eingerichtet. Erst Schritt b.");
+    if (!details || !details.is_provisioned) throw new Error(t("err.notprov"));
     await applyFirmwareHash(rnode);
     try { await rnode.reset(); } catch (_) { /* hat sich vielleicht selbst neu gestartet */ }
   } finally {
@@ -449,19 +575,18 @@ async function inspectNode() {
   try {
     const d = (await rnode.getRomAsObject()).parse();
     if (!d) {
-      log("EEPROM: nicht eingerichtet (Info-Sperre fehlt). Schritt b.");
+      log(t("log.eeprom.none"));
     } else {
-      log("EEPROM: " + (d.is_provisioned ? "eingerichtet" : "Prüfsumme passt NICHT") +
-        ", Produkt 0x" + d.product.toString(16) + ", Modell 0x" + d.model.toString(16) +
-        ", Hardware-Rev " + d.hardware_revision + ", Seriennr. " + d.serial_number);
-      log("Prüfsumme gespeichert " + d.checksum + ", berechnet " + d.calculated_checksum);
-      log("Konfiguriert: " + (d.is_configured ? "ja" : "nein"));
+      log(t("log.eeprom", { state: d.is_provisioned ? t("state.ok") : t("state.bad"),
+        product: d.product.toString(16), model: d.model.toString(16), hw: d.hardware_revision, serial: d.serial_number }));
+      log(t("log.checksum", { a: d.checksum, b: d.calculated_checksum }));
+      log(t("log.configured", { v: d.is_configured ? t("yes") : t("no") }));
     }
     const target = await rnode.getTargetFirmwareHash();
     const actual = await rnode.getFirmwareHash();
-    log("Firmware-Hash gesetzt:   " + hex(target));
-    log("Firmware-Hash tatsächlich: " + hex(actual));
-    log("Hash " + (hex(target) === hex(actual) ? "passt" : "passt NICHT, Schritt c"), hex(target) === hex(actual) ? "ok" : "err");
+    log(t("log.hash.set", { h: hex(target) }));
+    log(t("log.hash.actual", { h: hex(actual) }));
+    log(hex(target) === hex(actual) ? t("log.hash.ok") : t("log.hash.bad"), hex(target) === hex(actual) ? "ok" : "err");
   } finally {
     await rnode.close();
   }
@@ -477,25 +602,51 @@ function updateView() {
   $("uf2hint").classList.toggle("hidden", !b.uf2);
 }
 
+const renderFwInfo = () => { $("fwinfo").textContent = t(fwState.key, fwState.params); };
+
 async function loadManifest() {
   try {
     const m = await (await fetch("firmware/manifest.json", { cache: "no-cache" })).json();
-    $("fwinfo").textContent = "Firmware-Stand: Commit " + m.commit.slice(0, 7) + ", gebaut " + m.built.replace("T", " ").replace("Z", " UTC");
+    fwState = { key: "fw.info", params: { commit: m.commit.slice(0, 7), built: m.built.replace("T", " ").replace("Z", "") } };
   } catch (_) {
-    $("fwinfo").textContent = "Firmware-Stand unbekannt (manifest.json fehlt).";
+    fwState = { key: "fw.unknown" };
   }
+  renderFwInfo();
 }
+
+// Texte nach dem Sprachwechsel neu setzen, die aus dem Programm kommen (Status, Firmware-Stand, "Bereit.").
+function renderDynamic() {
+  renderBtStatus();
+  renderFwInfo();
+  if (logPristine) logEl.textContent = t("log.ready");
+}
+
+function chooseLang(l) {
+  setLang(l);
+  applyStatic();
+  renderDynamic();
+}
+
+initLang();
+applyStatic();
+renderDynamic();
+document.querySelectorAll("[data-lang]").forEach((b) => { b.onclick = () => chooseLang(b.dataset.lang); });
 
 if (!("serial" in navigator)) {
   $("nosupport").classList.remove("hidden");
-  document.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  document.querySelectorAll("button").forEach((b) => { if (!b.id.startsWith("lang-")) b.disabled = true; });
 } else {
-  $("btn-flash-esp32").onclick = () => run("Flashen (ESP32-S3)", flashEsp32);
-  $("btn-flash-nrf").onclick = () => run("Flashen (nRF52)", flashNrf);
-  $("btn-wipe").onclick = () => run("EEPROM leeren", wipeEeprom);
-  $("btn-provision").onclick = () => run("EEPROM einrichten", provisionEeprom);
-  $("btn-hash").onclick = () => run("Firmware-Hash setzen", setFirmwareHash);
-  $("btn-inspect").onclick = () => run("Status prüfen", inspectNode);
+  $("btn-flash-esp32").onclick = () => run("act.flash.esp", flashEsp32);
+  $("btn-flash-nrf").onclick = () => run("act.flash.nrf", flashNrf);
+  $("btn-wipe").onclick = () => run("act.wipe", wipeEeprom);
+  $("btn-provision").onclick = () => run("act.provision", provisionEeprom);
+  $("btn-hash").onclick = () => run("act.hash", setFirmwareHash);
+  $("btn-inspect").onclick = () => run("act.inspect", inspectNode);
+  $("btn-bt-on").onclick = () => run("act.bton", bluetoothOn);
+  $("btn-bt-off").onclick = () => run("act.btoff", bluetoothOff);
+  $("btn-bt-pair").onclick = () => run("act.btpair", bluetoothPair);
+  $("btn-bt-close").onclick = () => run("act.btclose", bluetoothClose);
+  updateButtons();
 }
 document.querySelectorAll('input[name="board"]').forEach((r) => r.addEventListener("change", updateView));
 updateView();

@@ -28,6 +28,15 @@ on every push to `main` and publishes everything on GitHub Pages
 password; the flasher writes the one the user types into the image while flashing (`site/espimage.js`).
 Without it the update window stays locked.
 
+The page is available in German and English (switch at the top right, preset from the browser language).
+Its Bluetooth card has buttons to turn Bluetooth on, turn it off and start pairing (the PIN is shown on the page,
+the pairing window stays open for 35 seconds). "Turn Bluetooth off" saves the state and restarts the board so that it
+stops transmitting at once.
+
+Note: while a phone or computer is connected to the board over Bluetooth, the firmware answers only there and not over
+USB. The flasher then reports that the device does not answer as an RNode. Switch Bluetooth off on that device
+(or forget the board there) and reconnect the board. Paired devices cannot be deleted from the page.
+
 ## Building
 
 The libraries `microReticulum` and `microStore` (Apache License 2.0) and a few other
