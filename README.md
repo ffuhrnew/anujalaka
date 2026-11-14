@@ -33,8 +33,7 @@ Its Bluetooth card has buttons to turn Bluetooth on, turn it off and start pairi
 the pairing window stays open for 35 seconds). "Turn Bluetooth off" saves the state and restarts the board so that it
 stops transmitting at once.
 
-The flasher also offers the **Heltec LoRa32 V3** (ESP32-S3, product `0xC1`, model `0xCA` for 868/915 MHz or `0xC5`
-for 433 MHz, PlatformIO environment `heltec_wifi_lora_32_V3`). It is untested on hardware. If its build fails in CI the
+The flasher also offers the **Heltec LoRa32 V3** (ESP32-S3, product `0xC1`, model `0xCA`, 868/915 MHz, PlatformIO environment `heltec_wifi_lora_32_V3`). It is untested on hardware. If its build fails in CI the
 page is still published, just without this board. No button press on the board is needed.
 
 Note: while a phone or computer is connected to the board over Bluetooth, the firmware answers only there and not over

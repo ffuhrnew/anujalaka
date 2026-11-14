@@ -20,23 +20,11 @@ const BOARDS = {
       { address: 0x10000, path: "firmware/xiao_esp32s3/firmware.bin" },
     ],
   },
-  // Heltec LoRa32 V3 (ESP32-S3, 8 MB): Produkt 0xC1, Modell 0xCA (868/915 MHz) oder 0xC5 (433 MHz). Ungetestet.
+  // Heltec LoRa32 V3 (ESP32-S3, 8 MB): Produkt 0xC1, Modell 0xCA (868/915 MHz). Ungetestet.
   heltec_v3: {
     kind: "esp32",
     product: 0xC1,
     model: 0xCA,
-    flashSize: "8MB",
-    files: [
-      { address: 0x0,     path: "firmware/heltec_v3/bootloader.bin" },
-      { address: 0x8000,  path: "firmware/heltec_v3/partitions.bin" },
-      { address: 0xe000,  path: "firmware/heltec_v3/boot_app0.bin" },
-      { address: 0x10000, path: "firmware/heltec_v3/firmware.bin" },
-    ],
-  },
-  heltec_v3_433: {
-    kind: "esp32",
-    product: 0xC1,
-    model: 0xC5,
     flashSize: "8MB",
     files: [
       { address: 0x0,     path: "firmware/heltec_v3/bootloader.bin" },
