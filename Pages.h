@@ -27,6 +27,7 @@
 #include "BME680.h"
 #endif
 #include "BootInfo.h"
+#include "BuildInfo.h"
 // CBA NOTE Thge following <MsgPack.h> include *MUST* precede the "Utilities.h" include
 #include <MsgPack.h>
 
@@ -153,6 +154,7 @@ RNS::Bytes serve_page(
       samaya_time_line(line, sizeof(line)); content << line;
       samaya_status_line(line, sizeof(line)); content << line;
       snprintf(line, sizeof(line), "Start: %s\n", boot_reset_reason); content << line;
+      snprintf(line, sizeof(line), "Build: %s\n", fw_build_id()); content << line;
       #if defined(NRF52840_XXAA)
       snprintf(line, sizeof(line), "Boot: %s\n", bootloader_info()); content << line;
       #endif
