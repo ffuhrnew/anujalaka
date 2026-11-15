@@ -279,6 +279,20 @@ def firmware_package(env):
 Import("env")
 
 env.Replace(PROGNAME="rnode_firmware_%s" % env.GetProjectOption("custom_variant"))
+
+# Build-Stand (Git-Commit) in die Firmware: erscheint in der Verwaltung (Device > Firmware) und auf der Health-Seite.
+# Nicht-eingechecktes bekommt ein "-dirty", ohne Git bleibt "unknown".
+def _build_id():
+    import subprocess
+    try:
+        run = lambda *a: subprocess.run(a, cwd=env.subst("$PROJECT_DIR"), capture_output=True, text=True, timeout=10).stdout.strip()
+        sha = run("git", "rev-parse", "--short=7", "HEAD")
+        if not sha:
+            return "unknown"
+        return sha + ("-dirty" if run("git", "status", "--porcelain", "--untracked-files=no") else "")
+    except Exception:
+        return "unknown"
+env.Append(CPPDEFINES=[("FW_BUILD_ID", env.StringifyMacro(_build_id()))])
 print("PROGNAME:", env.subst("$PROGNAME"))
 
 print("*** Running custom script...")
