@@ -54,6 +54,16 @@ export PLATFORMIO_BUILD_FLAGS='-DOTA_WIFI_PASSWORD=\"choose-your-own\"'
 pio run -e seeed_xiao_esp32s3
 ```
 
+`publish-dfu.sh` (builds RAK4631, XIAO nRF52840 and XIAO ESP32-S3 into the iCloud DFU folder) writes the ESP32
+update-window password into the finished `xiao_esp32s3.bin` with `tools/patch_cli.mjs`, the same function the web
+flasher uses. The password comes from a file outside the repository, one line, 8 to 63 characters:
+
+```
+mkdir -p ~/.config/anujalaka && printf '%s\n' 'choose-your-own' > ~/.config/anujalaka/ota-password && chmod 600 ~/.config/anujalaka/ota-password
+```
+
+Another path can be given with `OTA_PW_FILE`. Without the file the ESP32 build stops with an error.
+
 ## License
 
 GNU General Public License v3.0, see [LICENSE](LICENSE). Copyright notices of the
