@@ -1,6 +1,11 @@
 #!/bin/bash
 # publish-dfu.sh - baut RAK4631, XIAO nRF52840 und XIAO ESP32-S3 neu und legt sie in iCloud ab
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd ~/microReticulum_Firmware_Build || exit 1
+# ESP32: Passwort des WLAN-Update-Fensters. Steht in einer Datei ausserhalb des Repos (eine Zeile, 8 bis 63 Zeichen)
+# und wird nach dem Bauen in die fertige Datei eingetragen (tools/patch_cli.mjs, wie beim Web-Flasher).
+PWFILE="${OTA_PW_FILE:-$HOME/.config/anujalaka/ota-password}"
+PATCH="$PWD/tools/patch_cli.mjs"; [ -f "$PATCH" ] || PATCH="$SCRIPT_DIR/tools/patch_cli.mjs"
 unset PLATFORMIO_BUILD_FLAGS
 DEST="$HOME/Library/Mobile Documents/com~apple~CloudDocs/DFU/Solar"
 [ -d "$DEST" ] || { echo "FEHLER: Ordner fehlt: $DEST"; exit 1; }
@@ -23,7 +28,13 @@ build() {  # env  suchmuster  zielname
   f=$(ls -t .pio/build/$env/$pat 2>/dev/null | head -1)
   [ -n "$f" ] || { echo "FEHLER: keine Datei $pat fuer $env"; exit 1; }
   [ "$(stat -f %m "$f")" -ge "$start" ] || { echo "FEHLER: $f ist nicht frisch gebaut"; exit 1; }
-  cp -f "$f" "$DEST/$name" || exit 1
+  if [ "$name" = "xiao_esp32s3.bin" ]; then
+    [ -f "$PWFILE" ] || { echo "FEHLER: Passwortdatei fehlt: $PWFILE (eine Zeile, 8 bis 63 Zeichen)"; exit 1; }
+    [ -f "$PATCH" ] || { echo "FEHLER: $PATCH fehlt (git pull im Repo)"; exit 1; }
+    node "$PATCH" "$f" "$DEST/$name" "$(tr -d '\r\n' < "$PWFILE")" || { echo "FEHLER: Passwort konnte nicht eingetragen werden"; exit 1; }
+  else
+    cp -f "$f" "$DEST/$name" || exit 1
+  fi
   echo "$name  $(shasum -a 256 "$DEST/$name" | cut -c1-16)  (aus $(basename "$f"))" >> "$STAND.tmp"
   echo "    OK $name"
 }
